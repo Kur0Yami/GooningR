@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tool\build_protected.ps1 -
 
 APK：`build/app/outputs/flutter-apk/app-release.apk`。
 
-Android release 产物大小为 `645,953,392` 字节，SHA-256 为 `30e88c618738ffa01e65fcdea300886efc768c358bed5b78ca2e54f61afb1342`；元数据为 `versionName=1.0.4`、`versionCode=40`，APK Signature Scheme v2 验证通过。Windows release 运行目录已打包为 `AgentAtelierR-1.0.4-windows-release.zip`，大小 `598,508,508` 字节，SHA-256 为 `2c92844516176660c05f4df5d1fad50cd47f28bdc1f98f428e0b4b1dec46aba7`，ZIP 内含 `AgentAtelierR.exe` 与 `data` 目录。两端均使用正常 main 入口，由本项目受保护脚本重新构建，启用人物资源加密和 Dart 混淆。Android release 继续使用现有调试签名，以便覆盖安装测试包，不代表应用商店签名。
+Android release 产物大小为 `645,974,252` 字节，SHA-256 为 `154c87e0cbfc93fc67d59ac73c035152121f7b5ed8826f6f4dfd18861db5dd98`；元数据为 `versionName=1.0.4`、`versionCode=41`，APK Signature Scheme v2 验证通过。Windows release 运行目录已打包为 `AgentAtelierR-1.0.4-windows-release.zip`，大小 `598,516,663` 字节，SHA-256 为 `b0d6d9157a1fe8fad9385f646efb7394703409f32fa1ac72a8776cd47ba125a7`，ZIP 内含 `AgentAtelierR.exe` 与 `data` 目录。两端均使用正常 main 入口，由本项目受保护脚本重新构建，启用人物资源加密和 Dart 混淆。Android release 继续使用现有调试签名，以便覆盖安装测试包，不代表应用商店签名。
 
 本次 83 项 NPC 联系人相关测试通过，Flutter 静态分析无问题。回归使用实际设备已有台词，运行主聊天、用户确认及虚拟手机联系人窗口；另覆盖中止 SSE 后保留的半截回复、网络失败、不相关话题、拒绝确认、新档、角色隔离及存档往返。设备仅用于读取问题证据，本次不声称已经完成新版真机在线聊天验收。详情见 [场景 NPC 联系请求修复](https://github.com/onion-aqua/AgentAtelierR/blob/v1.0.4/docs/bugfix_npc_contact_followup.md)。
 
@@ -51,7 +51,7 @@ Android release 产物大小为 `645,953,392` 字节，SHA-256 为 `30e88c618738
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\build_protected.ps1 -Target windows -Mode release
 ```
 
-解压 Release 附件 `AgentAtelierR-1.0.4-windows-release.zip` 后运行 `AgentAtelierR.exe`，保留同目录 DLL 和 `data` 文件夹。EXE 版本为 `1.0.4+40`，未标记为 Debug；应用 Dart 代码位于 `data/app.so`。Android APK 和 Windows ZIP 均只包含新服装的加密角色包与加密预览，没有新服装的原始文件。
+解压 Release 附件 `AgentAtelierR-1.0.4-windows-release.zip` 后运行 `AgentAtelierR.exe`，保留同目录 DLL 和 `data` 文件夹。EXE 版本为 `1.0.4+41`，未标记为 Debug；应用 Dart 代码位于 `data/app.so`。Android APK 和 Windows ZIP 均只包含新服装的加密角色包与加密预览，没有新服装的原始文件。
 
 此前联系人与代理修复的 73 项相关测试通过，Flutter 静态分析无问题，Windows 网络通道 C++ 编译检查通过。联系人测试实际经过主聊天输入、NPC 日语姓名回复、添加确认、TTS 缺配置或 HTTP 401 失败及虚拟手机联系人窗口。此前新服装原生 Spine 回归及包内资源校验通过；本轮不声称已做手动换装或真实在线语音验收。dshagalt 是另一个项目，本次未修改其源码或部署。
 
