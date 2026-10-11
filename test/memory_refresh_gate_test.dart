@@ -38,4 +38,66 @@ void main() {
     expect(gate.running, isFalse);
     expect(gate.begin(), isNotNull);
   });
+
+  test(
+    'failed memory batch is cooled down, while another batch can proceed',
+    () {
+      final cooldown = MemoryBatchRetryCooldown();
+      final now = DateTime(2026, 10, 11, 12);
+      cooldown.markFailed(
+        'save-2:0:8:4',
+        retryAfter: now.add(const Duration(minutes: 2)),
+      );
+
+      expect(cooldown.isCooling('save-2:0:8:4', now: now), isTrue);
+      expect(cooldown.isCooling('save-2:8:16:4', now: now), isFalse);
+      expect(
+        cooldown.isCooling(
+          'save-2:0:8:4',
+          now: now.add(const Duration(minutes: 2)),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test('successful or manual retry can clear the automatic batch cooldown', () {
+    final cooldown = MemoryBatchRetryCooldown();
+    final now = DateTime(2026, 10, 11, 12);
+    cooldown.markFailed(
+      'save-2:0:8:4',
+      retryAfter: now.add(const Duration(minutes: 2)),
+    );
+
+    // The cooldown only gates callers that choose to consult it.  Manual
+    // consolidation can run directly and clear the automatic retry state.
+    cooldown.markSucceeded();
+    expect(cooldown.isCooling('save-2:0:8:4', now: now), isFalse);
+
+    cooldown.markFailed(
+      'save-2:0:8:4',
+      retryAfter: now.add(const Duration(minutes: 2)),
+    );
+    cooldown.clear();
+    expect(cooldown.isCooling('save-2:0:8:4', now: now), isFalse);
+  });
+
+  test(
+    'retry identity changes when the contents of a same-size batch change',
+    () async {
+      Future<String> key(List<String> memories) => buildMemoryBatchRetryKey(
+        dataRevision: 2,
+        start: 0,
+        end: 8,
+        memoryEditRevision: 4,
+        memories: memories,
+      );
+
+      final original = List<String>.generate(8, (index) => 'memory $index');
+      final replacement = [...original]..[7] = 'withdrawn memory replacement';
+
+      expect(await key(original), isNot(await key(replacement)));
+      expect(await key(original), await key([...original]));
+    },
+  );
 }

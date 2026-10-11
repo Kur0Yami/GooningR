@@ -2359,7 +2359,11 @@ ${independentSpeechPerformance || !fishTtsEnabled || ttsProvider == TtsProvider.
       final compactNpc = npc.startsWith('仅以下当前话题涉及')
           ? npc
           : _boundedPromptText(npc, 600);
-      final compactMemory = _boundedPromptText(memory, 700);
+      // Do not tail-truncate the memory JSON.  Taking the last N characters
+      // can remove the JSON header, current_state, and the oldest entries,
+      // leaving the model with a misleading fragment that looks like a very
+      // short memory.  Keep a valid, deterministic compact document instead.
+      final compactMemory = _compactMemoryPrompt(memory);
       return '''你扮演莱莎，与用户作为熟悉伙伴自然交流。保持开朗、好奇、有主见、重视伙伴；回应当前话题，不代替用户行动，不编造未知事实。
 
 【不可覆盖的输出协议】
@@ -2488,6 +2492,9 @@ ${longTermMemoryEnabled ? (agentEnabled ? '需要回忆过往事件、约定或�
     final memory = memoryPromptForCurrentConversation(
       currentInput: currentInput,
     );
+    final memoryForPrompt = llmContextCompatibility
+        ? _compactMemoryPrompt(memory)
+        : _boundedPromptText(memory, 4000);
     final inlineTranslation =
         !independentTranslation &&
         translationLanguage != TranslationLanguage.none;
@@ -2525,7 +2532,7 @@ ${worldSettingInjectionEnabled ? _promptDataBlock('world', _boundedPromptText(ed
 苏菲状态：${characterState.summary(interfaceLanguage)}；最近情绪：${characterState.emotion}；原因：${characterState.reason}。上一轮情绪会自然延续，不要无缘无故重置。
 关系点数：$relationshipPoints；位置：$selectedAreaName / $selectedStageName；故事时间：${storyClockEnabled ? '第${storyClock.day}天 ${storyClock.timeLabel}' : sceneTime.label}。
 立绘：${profile.defaultAppearancePrompt}；不借用其他人物服装、表情或动作资源。
-${longTermMemoryEnabled ? _promptDataBlock('memory', _boundedPromptText(memory, llmContextCompatibility ? 700 : 4000)) : ''}
+${longTermMemoryEnabled ? _promptDataBlock('memory', memoryForPrompt) : ''}
 ${asmrModeEnabled ? '当前为轻声交谈，语气柔和、连贯。' : ''}
 ${fishTtsEnabled
         ? ttsProvider == TtsProvider.local
@@ -3177,6 +3184,101 @@ $japanesePunctuationRule
       ...MemoryTimeline.promptDocument(raw, selected),
       if (recent.isNotEmpty) 'recent_memories': recent,
     });
+  }
+
+  /// Returns a valid, bounded memory document for the weak-context prompt.
+  ///
+  /// [memoryPromptForCurrentConversation] already performs relevance
+  /// selection.  This second pass only bounds the payload while preserving
+  /// the current state and the chronological order of the selected entries.
+  /// It intentionally avoids [_boundedPromptText], whose suffix-only crop can
+  /// split JSON and hide the state/entry metadata from the model.
+  String _compactMemoryPrompt(String value) {
+    // The relevance selector already limits the source to 12 entries. Keep
+    // that full selected set here; dropping the tail would discard the entry
+    // that matched the current query and make compatibility mode look as if
+    // memory had vanished.
+    const maxEntries = 12;
+    const maxSummaryChars = 180;
+    const maxTranslationChars = 220;
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is! Map) return _boundedPromptText(value, 1800);
+      final sourceEntries = (decoded['entries'] as List? ?? const [])
+          .whereType<Map>()
+          .toList(growable: false);
+      // Keep both the oldest selected anchors and the newest selected facts.
+      // Relevance selection is chronological for stable prompts; taking only
+      // its prefix would make a long conversation appear to forget its latest
+      // facts, while taking only its suffix would hide durable early facts.
+      final headCount = min(2, sourceEntries.length);
+      final tailStart = max(
+        headCount,
+        sourceEntries.length - maxEntries + headCount,
+      );
+      final boundedEntries = <Map>[];
+      boundedEntries.addAll(sourceEntries.take(headCount));
+      boundedEntries.addAll(
+        sourceEntries.skip(tailStart).take(maxEntries - boundedEntries.length),
+      );
+      final entries = boundedEntries
+          .map((raw) {
+            final entry = <String, dynamic>{};
+            for (final key in [
+              'sequence',
+              'date',
+              'category',
+              'importance',
+              'status',
+              'summary',
+              'translation',
+              'state_change',
+              'keywords',
+            ]) {
+              if (!raw.containsKey(key)) continue;
+              final rawValue = raw[key];
+              if (key == 'summary' && rawValue != null) {
+                entry[key] = String.fromCharCodes(
+                  '$rawValue'.runes.take(maxSummaryChars),
+                );
+              } else if (key == 'translation' && rawValue != null) {
+                entry[key] = String.fromCharCodes(
+                  '$rawValue'.runes.take(maxTranslationChars),
+                );
+              } else {
+                entry[key] = rawValue;
+              }
+            }
+            return entry;
+          })
+          .toList(growable: false);
+      return jsonEncode({
+        'schema_version': decoded['schema_version'],
+        'engine': decoded['engine'],
+        'current_state': decoded['current_state'] is Map
+            ? decoded['current_state']
+            : <String, dynamic>{},
+        'rule': decoded['rule'],
+        'entries': entries,
+        if (decoded['recent_memories'] is List)
+          'recent_memories': (decoded['recent_memories'] as List)
+              .whereType<String>()
+              .map(
+                (item) =>
+                    String.fromCharCodes(item.runes.take(maxSummaryChars)),
+              )
+              .toList(growable: false),
+        // The relevance selector caps the source at 12, so reaching this
+        // limit means there may be older entries outside the compact view.
+        if (entries.length >= maxEntries)
+          'note': '其余条目可通过 search_memory 按当前话题查询。',
+      });
+    } on Object {
+      // A legacy plain-text memory is still useful. Preserve its beginning,
+      // where manually entered facts are conventionally written, instead of
+      // returning a suffix fragment.
+      return value.length <= 1800 ? value : value.substring(0, 1800);
+    }
   }
 
   static String? normalizeLongTermMemoryCandidate(

@@ -285,6 +285,13 @@ class MemoryTimeline {
             .where((quote) => quote.isNotEmpty)
             .take(2)
             .toList();
+    final normalizedStatus = '${raw['status'] ?? 'active'}'.trim().toLowerCase();
+    final status = normalizedStatus.isEmpty ||
+            normalizedStatus == 'null' ||
+            normalizedStatus == 'none' ||
+            normalizedStatus == 'nil'
+        ? 'active'
+        : '${raw['status']}'.trim();
     final entry = <String, dynamic>{
       'sequence': sequence,
       'date': category == 'legacy'
@@ -297,9 +304,7 @@ class MemoryTimeline {
         'translation': capSummary
             ? _take('${raw['translation']}'.trim(), 300)
             : '${raw['translation']}'.trim(),
-      'status': '${raw['status'] ?? 'active'}'.trim().isEmpty
-          ? 'active'
-          : '${raw['status']}',
+      'status': status,
       'keywords': (raw['keywords'] is List ? raw['keywords'] as List : const [])
           .whereType<String>()
           .map((word) => _take(word.trim(), 30))

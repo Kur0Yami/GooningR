@@ -150,6 +150,29 @@ void main() {
     expect((afterDelete['entries'] as List).last['id'], 'AM0003');
   });
 
+  test('model string null statuses are normalized to active', () {
+    final normalized = MemoryTimeline.normalizeExisting(
+      jsonEncode({
+        'entries': [
+          {
+            'sequence': 1,
+            'date': '2026-10-11',
+            'summary': '模型返回的记忆事实',
+            'status': 'null',
+          },
+          {
+            'sequence': 2,
+            'date': '2026-10-11',
+            'summary': '另一个事实',
+            'status': 'none',
+          },
+        ],
+      }),
+    );
+    final entries = (_decode(normalized)['entries'] as List);
+    expect(entries.map((entry) => entry['status']), ['active', 'active']);
+  });
+
   test(
     'critical history survives omitted candidate and summaries are bounded',
     () {

@@ -25,7 +25,7 @@
 - 截断 WAV 按预期触发同类音源准备错误，模拟器返回 `what:1`。这证明损坏文件的错误路径可以被验证，不能据此认定用户设备的 `what:13` 是同一原因。
 - 最终修复已使用加密脚本构建正常 `lib/main.dart` debug 包，安装到 `emulator-5554`。已确认正常主界面加载、应用进程存活，启动检查未发现 Android 崩溃记录。该次模拟器检查 APK 为 `build/app/outputs/flutter-apk/app-debug.apk`；恢复界面截图为 `build/asmr-app-restored.png`。
 
-正式发布使用正常 main 入口的受保护 Android 与 Windows release 构建，版本为 `1.0.4+39`，覆盖更新 `v1.0.4`；产物信息见 [1.0.4 更新说明](CHANGELOG_1.0.4.md)。
+正式发布使用正常 main 入口的受保护 Android 与 Windows release 构建，版本为 `1.0.4+41`，覆盖更新 `v1.0.4`；产物信息见 [1.0.4 更新说明](CHANGELOG_1.0.4.md)。
 
 原生结果保存在本地 `build/asmr-native-audio-report.json`，完成截图为 `build/asmr-native-audio-finished.png`。这些是开发检查产物，不包含线上 Fish Audio 响应。
 

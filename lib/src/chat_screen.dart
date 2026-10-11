@@ -588,7 +588,13 @@ class _ChatScreenState extends State<ChatScreen> {
   })?
   _contactFollowUp;
   final _memoryRefreshGate = MemoryRefreshGate();
+  final _longTermMemoryCooldown = MemoryBatchRetryCooldown();
   Future<void> Function()? _pendingMemoryRefresh;
+  // A slow/invalid provider response must not make every following chat turn
+  // send the same eight recent memories again.  This cooldown is deliberately
+  // in-memory only: changing a save or using the manual organizer should
+  // never be blocked by an old transport failure.
+  static const _longTermMemoryRetryCooldown = Duration(minutes: 2);
   String _previousSpeechEmotion = 'relaxed';
   int _suggestionGeneration = 0;
   late int _observedDataRevision;
@@ -841,6 +847,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _lastConversationLegAt = null;
     _previousSpeechEmotion = 'relaxed';
     _pendingMemoryRefresh = null;
+    _longTermMemoryCooldown.clear();
     _replyGeneration += 1;
     _memoryRefreshGate.invalidate(afterLoad: true);
     _suggestionGeneration += 1;
@@ -5195,6 +5202,34 @@ class _ChatScreenState extends State<ChatScreen> {
     return snapshot.skip(start).where((message) => !message.isFailure).toList();
   }
 
+  Future<String> _longTermMemoryBatchKey(
+    AppController controller,
+    int start,
+    int end,
+    List<String> memories,
+  ) => buildMemoryBatchRetryKey(
+    dataRevision: controller.dataRevision,
+    start: start,
+    end: end,
+    memoryEditRevision: controller.memoryEditRevision,
+    memories: memories,
+  );
+
+  bool _longTermMemoryBatchCooling(String key) {
+    return _longTermMemoryCooldown.isCooling(key);
+  }
+
+  void _coolLongTermMemoryBatch(String key) {
+    _longTermMemoryCooldown.markFailed(
+      key,
+      retryAfter: DateTime.now().add(_longTermMemoryRetryCooldown),
+    );
+  }
+
+  void _clearLongTermMemoryBatchCooldown() {
+    _longTermMemoryCooldown.markSucceeded();
+  }
+
   Future<void> _refreshLongTermMemory(
     String apiKey, {
     required LlmProvider provider,
@@ -5274,8 +5309,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 model: model,
                 messages: messages,
               ),
+              completeWithBudget: (messages, {maxCompletionTokens}) =>
+                  _aiClient.complete(
+                    lightweight: true,
+                    provider: provider,
+                    baseUrl: baseUrl,
+                    apiKey: apiKey,
+                    model: model,
+                    messages: messages,
+                    maxCompletionTokens: maxCompletionTokens,
+                  ),
+              maxCompletionTokens: 1024,
             )
-            .timeout(const Duration(seconds: 30));
+            .timeout(const Duration(seconds: 45));
         if (!mounted ||
             !_memoryRefreshGate.owns(generation) ||
             revision != widget.controller.dataRevision ||
@@ -5302,46 +5348,87 @@ class _ChatScreenState extends State<ChatScreen> {
       final start = controller.longTermMemoryConsolidatedCount;
       final end = start + 8;
       if (controller.recentMemories.length >= end) {
-        final previousMemory = controller.memorySummary;
-        final editRevision = controller.memoryEditRevision;
         final recentBatch = controller.recentMemories
             .skip(start)
             .take(8)
             .toList();
-        RuntimeLog.instance.info('Memory', '整理长期记忆：model=$model，recent=8');
-        final memory = await MemoryConsolidator()
-            .consolidate(
-              previousMemory: previousMemory,
-              recentMemories: recentBatch,
-              promptOverride: controller.memoryConsolidationPrompt,
-              now: DateTime.now(),
-              complete: (messages) => _aiClient.complete(
-                lightweight: true,
-                provider: provider,
-                baseUrl: baseUrl,
-                apiKey: apiKey,
-                model: model,
-                messages: messages,
-              ),
-            )
-            .timeout(const Duration(seconds: 30));
-        if (!mounted ||
-            !_memoryRefreshGate.owns(generation) ||
-            revision != controller.dataRevision ||
-            !controller.longTermMemoryEnabled ||
-            previousMemory != controller.memorySummary) {
-          RuntimeLog.instance.info('Memory', '丢弃长期记忆：记忆、存档或开关已改变');
-          return;
-        }
-        if (memory != null &&
-            controller.applyConsolidatedLongTermMemory(
-              memory,
-              expectedEditRevision: editRevision,
-              throughRecentMemoryCount: end,
-            )) {
-          RuntimeLog.instance.info('Memory', '长期记忆整理成功，已保存');
+        final batchKey = await _longTermMemoryBatchKey(
+          controller,
+          start,
+          end,
+          recentBatch,
+        );
+        if (_longTermMemoryBatchCooling(batchKey)) {
+          RuntimeLog.instance.info(
+            'Memory',
+            '跳过长期记忆重复整理：batch=$start-$end，冷却中',
+          );
         } else {
-          RuntimeLog.instance.warning('Memory', '长期记忆整理无效或已过期，保留旧记忆');
+          final previousMemory = controller.memorySummary;
+          final editRevision = controller.memoryEditRevision;
+          RuntimeLog.instance.info(
+            'Memory',
+            '整理长期记忆：model=$model，recent=8，batch=$start-$end',
+          );
+          try {
+            // Long-term consolidation only needs a small JSON ledger.  A
+            // bounded completion prevents reasoning-heavy providers from
+            // spending 30–60 seconds generating thousands of unused tokens.
+            final memory = await MemoryConsolidator()
+                .consolidate(
+                  previousMemory: previousMemory,
+                  recentMemories: recentBatch,
+                  promptOverride: controller.memoryConsolidationPrompt,
+                  now: DateTime.now(),
+                  complete: (messages) => _aiClient.complete(
+                    lightweight: true,
+                    provider: provider,
+                    baseUrl: baseUrl,
+                    apiKey: apiKey,
+                    model: model,
+                    messages: messages,
+                  ),
+                  completeWithBudget: (messages, {maxCompletionTokens}) =>
+                      _aiClient.complete(
+                        lightweight: true,
+                        provider: provider,
+                        baseUrl: baseUrl,
+                        apiKey: apiKey,
+                        model: model,
+                        messages: messages,
+                        maxCompletionTokens: maxCompletionTokens,
+                      ),
+                  maxCompletionTokens: 2048,
+                )
+                .timeout(const Duration(seconds: 75));
+            if (!mounted ||
+                !_memoryRefreshGate.owns(generation) ||
+                revision != controller.dataRevision ||
+                !controller.longTermMemoryEnabled ||
+                previousMemory != controller.memorySummary) {
+              RuntimeLog.instance.info('Memory', '丢弃长期记忆：记忆、存档或开关已改变');
+              return;
+            }
+            if (memory != null &&
+                controller.applyConsolidatedLongTermMemory(
+                  memory,
+                  expectedEditRevision: editRevision,
+                  throughRecentMemoryCount: end,
+                )) {
+              _clearLongTermMemoryBatchCooldown();
+              RuntimeLog.instance.info('Memory', '长期记忆整理成功，已保存');
+            } else {
+              _coolLongTermMemoryBatch(batchKey);
+              RuntimeLog.instance.warning(
+                'Memory',
+                '长期记忆整理无效或已过期，保留旧记忆；本批次进入冷却',
+              );
+            }
+          } on Object catch (error, stackTrace) {
+            _coolLongTermMemoryBatch(batchKey);
+            RuntimeLog.instance.error('Memory', error, stackTrace);
+            RuntimeLog.instance.warning('Memory', '长期记忆整理失败，本批次将在冷却后重试');
+          }
         }
       }
       if (recordedRecent &&

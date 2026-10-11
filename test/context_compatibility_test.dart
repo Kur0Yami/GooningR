@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ryza_chat_mvp/src/app_controller.dart';
@@ -185,4 +187,41 @@ void main() {
       contains('长期记忆功能已关闭'),
     );
   });
+
+  test(
+    'compact memory prompt keeps state and valid entry boundaries',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = await AppController.load();
+      addTearDown(controller.dispose);
+      controller.updateMemorySummary(
+        jsonEncode({
+          'entries': [
+            for (var index = 0; index < 12; index++)
+              {
+                'date': '2026-09-${(index + 1).toString().padLeft(2, '0')}',
+                'category': 'other',
+                'importance': 1,
+                'summary': 'compact-memory-$index',
+              },
+            {
+              'date': '2026-09-20',
+              'category': 'relationship_turning_point',
+              'importance': 5,
+              'summary': '当前关系已确认',
+              'state_change': {'domain': '关系', 'from': '陌生人', 'to': '伙伴'},
+            },
+          ],
+        }),
+      );
+      controller.setLlmContextCompatibility(true);
+      final prompt = controller.buildCharacterPrompt();
+      expect(prompt, contains('"current_state"'));
+      expect(prompt, contains('compact-memory-11'));
+      expect(prompt, contains('其余条目可通过 search_memory 按当前话题查询。'));
+      // The compact document must not be a suffix fragment beginning in the
+      // middle of a JSON string.
+      expect(prompt, contains('"schema_version":2'));
+    },
+  );
 }

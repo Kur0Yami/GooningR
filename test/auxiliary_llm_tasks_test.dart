@@ -333,6 +333,25 @@ void main() {
     expect(result, contains('约定明天去森林'));
   });
 
+  test('long-term memory passes the requested completion budget', () async {
+    int? observedBudget;
+    final result = await MemoryConsolidator().consolidate(
+      previousMemory: '{"entries":[]}',
+      recentMemories: const ['用户约定明天去森林。'],
+      now: DateTime(2026, 9, 26),
+      complete: (_) async => fail('budgeted callback should be selected'),
+      completeWithBudget: (messages, {maxCompletionTokens}) async {
+        observedBudget = maxCompletionTokens;
+        expect(messages, hasLength(2));
+        return '{"entries":[{"date":"2026-09-26","summary":"约定明天去森林。"}]}';
+      },
+      maxCompletionTokens: 2048,
+    );
+
+    expect(result, contains('约定明天去森林'));
+    expect(observedBudget, 2048);
+  });
+
   test(
     'long-term model sees bounded reference while saved history stays whole',
     () async {

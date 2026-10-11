@@ -11,6 +11,15 @@ typedef AuxiliaryCompletion = Future<String> Function(
   List<Map<String, String>> messages,
 );
 
+/// Optional extension used by bounded auxiliary jobs.  Keeping the original
+/// callback type above preserves compatibility with settings/tests that use a
+/// simple `(messages) => ...` closure, while memory jobs can pass a provider
+/// token budget without changing those callers.
+typedef BudgetedAuxiliaryCompletion = Future<String> Function(
+  List<Map<String, String>> messages, {
+  int? maxCompletionTokens,
+});
+
 /// Fixed-purpose requests: no roleplay prompt, tools, attachments or API keys
 /// in the payload. The caller supplies the authenticated shared client.
 class DialogueTranslator {
@@ -166,8 +175,10 @@ class RecentMemoryConsolidator {
     required String dialogue,
     required DateTime now,
     required AuxiliaryCompletion complete,
+    BudgetedAuxiliaryCompletion? completeWithBudget,
+    int? maxCompletionTokens,
   }) async {
-    final candidate = await complete([
+    final messages = <Map<String, String>>[
       {
         'role': 'system',
         'content': '$defaultPrompt\n当前时间：${now.toIso8601String()}。',
@@ -176,7 +187,13 @@ class RecentMemoryConsolidator {
         'role': 'user',
         'content': jsonEncode({'new_dialogue': dialogue}),
       },
-    ]);
+    ];
+    final candidate = completeWithBudget == null
+        ? await complete(messages)
+        : await completeWithBudget(
+            messages,
+            maxCompletionTokens: maxCompletionTokens,
+          );
     try {
       final decoded = jsonDecode(
         candidate
@@ -208,12 +225,14 @@ summary 不超过50字，以第三方视角直白、客观交代起因、经过�
     String? promptOverride,
     required DateTime now,
     required AuxiliaryCompletion complete,
+    BudgetedAuxiliaryCompletion? completeWithBudget,
+    int? maxCompletionTokens,
   }) async {
     assert(dialogue != null || recentMemories != null);
     final prompt = (promptOverride?.trim().isNotEmpty ?? false)
         ? promptOverride!.trim()
         : defaultPrompt;
-    final candidate = await complete([
+    final messages = <Map<String, String>>[
       {
         'role': 'system',
         'content': prompt
@@ -231,7 +250,13 @@ summary 不超过50字，以第三方视角直白、客观交代起因、经过�
           'new_dialogue': ?dialogue,
         }),
       },
-    ]);
+    ];
+    final candidate = completeWithBudget == null
+        ? await complete(messages)
+        : await completeWithBudget(
+            messages,
+            maxCompletionTokens: maxCompletionTokens,
+          );
     return AppController.normalizeLongTermMemoryCandidate(
       candidate,
       previousMemory: previousMemory,

@@ -55,11 +55,11 @@ void main() {
           );
         }
         expect((messages.last as Map)['content'], contains('当前人物未启用该工具'));
-      return http.Response.bytes(
-        utf8.encode('{"choices":[{"message":{"content":"苏菲的回答"}}]}'),
-        200,
-        headers: {'content-type': 'application/json; charset=utf-8'},
-      );
+        return http.Response.bytes(
+          utf8.encode('{"choices":[{"message":{"content":"苏菲的回答"}}]}'),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
       });
       final client = OpenAiCompatibleClient(
         client: transport,
@@ -111,12 +111,67 @@ void main() {
     client.close();
   });
 
+  test(
+    'bounded auxiliary completion sends an explicit output budget',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final client = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['max_completion_tokens'], 1024);
+        return http.Response('{"choices":[{"message":{"content":"{}"}}]}', 200);
+      });
+      final output = await OpenAiCompatibleClient(client: client).complete(
+        baseUrl: 'https://example.test/v1',
+        apiKey: 'test-key',
+        model: 'deepseek-flash',
+        lightweight: true,
+        maxCompletionTokens: 1024,
+        messages: const [
+          {'role': 'system', 'content': 'JSON only'},
+          {'role': 'user', 'content': '{}'},
+        ],
+      );
+      expect(output, '{}');
+      client.close();
+    },
+  );
+
+  test(
+    'auxiliary completion forwards an explicit output token budget',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final client = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map;
+        expect(body['max_completion_tokens'], 2048);
+        return http.Response(
+          '{"choices":[{"message":{"content":"{\\"entries\\":[]}"}}]}',
+          200,
+        );
+      });
+      final output = await OpenAiCompatibleClient(client: client).complete(
+        baseUrl: 'https://example.test/v1',
+        apiKey: 'test-key',
+        model: 'test-model',
+        maxCompletionTokens: 2048,
+        messages: const [
+          {'role': 'system', 'content': 'Return a short JSON object'},
+          {'role': 'user', 'content': '{}'},
+        ],
+      );
+      expect(output, '{"entries":[]}');
+      client.close();
+    },
+  );
+
   test('OpenAI stream accepts decorated DONE terminal frames', () async {
     SharedPreferences.setMockInitialValues({});
+    await RuntimeLog.instance.initialize();
+    await RuntimeLog.instance.clear();
     final client = MockClient((_) async {
       return http.Response.bytes(
         utf8.encode(
           'data: {"choices":[{"delta":{"content":"完成"}}]}\n\n'
+          'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":8,"total_tokens":108,"prompt_tokens_details":{"cached_tokens":80}}}\n\n'
           'data: \uFEFF[DONE]\u0000  \n\n',
         ),
         200,
@@ -135,6 +190,13 @@ void main() {
         .toList();
 
     expect(output.join(), '完成');
+    final streamLog = RuntimeLog.instance.entries.lastWhere(
+      (entry) =>
+          entry.source == 'LLM' && entry.message.contains('cache_status'),
+    );
+    expect(streamLog.message, contains('"cached_tokens": 80'));
+    expect(streamLog.message, contains('"cache_status": "hit"'));
+    await RuntimeLog.instance.clear();
   });
 
   test('Ollama-compatible stream sends a trimmed bearer API key', () async {

@@ -437,6 +437,7 @@ class OpenAiCompatibleClient {
     }
 
     final deltas = StringBuffer();
+    Map<String, dynamic>? lastUsage;
     await for (final line
         in response.stream
             .transform(utf8.decoder)
@@ -450,6 +451,17 @@ class OpenAiCompatibleClient {
       if (data.isEmpty) continue;
       if (data.toUpperCase() == '[DONE]') break;
       final decoded = jsonDecode(data) as Map<String, dynamic>;
+      // Providers that support streaming usage usually send it in a final
+      // chunk with an empty choices array.  Keep that chunk for diagnostics;
+      // dropping it made cache hit/miss rates impossible to verify from the
+      // app logs.  We intentionally accept the chunk without requiring a
+      // particular provider's usage shape.
+      final usage = decoded['usage'];
+      if (usage is Map) {
+        lastUsage = {
+          for (final entry in usage.entries) '${entry.key}': entry.value,
+        };
+      }
       final error = decoded['error'];
       if (error is Map<String, dynamic>) {
         throw AiServiceException(error['message'] as String? ?? 'AI 流式响应返回错误');
@@ -466,7 +478,12 @@ class OpenAiCompatibleClient {
       method: 'POST',
       url: uri.toString(),
       duration: DateTime.now().difference(started),
-      payload: {'text': deltas.toString(), 'length': deltas.length},
+      payload: {
+        'text': deltas.toString(),
+        'length': deltas.length,
+        'request_metrics': _requestDiagnostics(body),
+        'usage': _usageSummary(lastUsage),
+      },
     );
   }
 
@@ -499,7 +516,11 @@ class OpenAiCompatibleClient {
       url: url.toString(),
       statusCode: response.statusCode,
       duration: DateTime.now().difference(started),
-      payload: response.body,
+      payload: {
+        'body': response.body,
+        'request_metrics': _requestDiagnostics(body),
+        'usage': _usageSummary(_decodedUsage(response.body)),
+      },
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AiServiceException(
@@ -1035,6 +1056,7 @@ class OpenAiCompatibleClient {
     bool lightweight = false,
     bool fastPlanning = false,
     bool performancePlanning = false,
+    int? maxCompletionTokens,
   }) async {
     if (fastPlanning || performancePlanning) {
       final budget = Duration(seconds: performancePlanning ? 30 : 3);
@@ -1055,6 +1077,7 @@ class OpenAiCompatibleClient {
               messages: messages,
               provider: provider,
               lightweight: lightweight,
+              maxCompletionTokens: maxCompletionTokens,
             )
             .timeout(budget);
       } finally {
@@ -1078,6 +1101,8 @@ class OpenAiCompatibleClient {
       'model': model,
       'stream': false,
       'messages': messages,
+      if (maxCompletionTokens != null && maxCompletionTokens > 0)
+        'max_completion_tokens': maxCompletionTokens,
       if (lightweight)
         ...identifyModelThinking(
           model,
@@ -1108,7 +1133,11 @@ class OpenAiCompatibleClient {
       url: url.toString(),
       statusCode: response.statusCode,
       duration: DateTime.now().difference(started),
-      payload: response.body,
+      payload: {
+        'body': response.body,
+        'request_metrics': _requestDiagnostics(requestBody),
+        'usage': _usageSummary(_decodedUsage(response.body)),
+      },
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AiServiceException(
@@ -1164,6 +1193,111 @@ class OpenAiCompatibleClient {
       // Preserve a concise client-facing error when the server returns HTML.
     }
     return '';
+  }
+
+  /// Returns request shape information without recording prompt contents.
+  /// This lets a 50-turn test distinguish a cache miss caused by a changed
+  /// prefix from a provider that simply did not report usage.
+  Map<String, Object?> _requestDiagnostics(Map<String, dynamic> body) {
+    final messages = body['messages'];
+    var promptChars = 0;
+    var systemChars = 0;
+    if (messages is List) {
+      for (final item in messages) {
+        if (item is! Map) continue;
+        final chars = _contentLength(item['content']);
+        promptChars += chars;
+        if (item['role'] == 'system') systemChars += chars;
+      }
+    }
+    return {
+      'message_count': messages is List ? messages.length : 0,
+      'prompt_chars': promptChars,
+      'system_chars': systemChars,
+      'stream': body['stream'] == true,
+      if (body['tools'] is List) 'tool_count': (body['tools'] as List).length,
+    };
+  }
+
+  int _contentLength(Object? content) {
+    if (content is String) return content.length;
+    if (content is List) {
+      var total = 0;
+      for (final part in content) {
+        if (part is Map) {
+          total += _contentLength(part['text']);
+          total += _contentLength(part['content']);
+        }
+      }
+      return total;
+    }
+    return 0;
+  }
+
+  Map<String, dynamic>? _decodedUsage(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) return null;
+      final usage = decoded['usage'];
+      if (usage is! Map) return null;
+      return {for (final entry in usage.entries) '${entry.key}': entry.value};
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Normalizes usage fields used by OpenAI, OpenRouter, Anthropic proxies,
+  /// and other OpenAI-compatible services.  `cache_status=unknown` is kept
+  /// when a provider omitted cache metadata; treating absent metadata as a
+  /// miss would produce a false 50/50 result in the user's 50-turn test.
+  Map<String, Object?> _usageSummary(Map<String, dynamic>? usage) {
+    if (usage == null) return {'cache_status': 'unknown'};
+    final summary = <String, Object?>{};
+    void copyNumber(String output, Iterable<Object?> values) {
+      for (final value in values) {
+        if (value is num) {
+          summary[output] = value;
+          return;
+        }
+      }
+    }
+
+    final promptDetails = usage['prompt_tokens_details'];
+    final inputDetails = usage['input_tokens_details'];
+    final promptMap = promptDetails is Map ? promptDetails : const {};
+    final inputMap = inputDetails is Map ? inputDetails : const {};
+    copyNumber('prompt_tokens', [
+      usage['prompt_tokens'],
+      usage['input_tokens'],
+    ]);
+    copyNumber('completion_tokens', [
+      usage['completion_tokens'],
+      usage['output_tokens'],
+    ]);
+    copyNumber('total_tokens', [usage['total_tokens']]);
+    copyNumber('cached_tokens', [
+      usage['cached_tokens'],
+      usage['cache_read_input_tokens'],
+      promptMap['cached_tokens'],
+      inputMap['cached_tokens'],
+      promptMap['cache_read_input_tokens'],
+      inputMap['cache_read_input_tokens'],
+    ]);
+    copyNumber('cache_creation_tokens', [
+      usage['cache_creation_input_tokens'],
+      promptMap['cache_creation_input_tokens'],
+      inputMap['cache_creation_input_tokens'],
+    ]);
+    final cached = summary['cached_tokens'];
+    final created = summary['cache_creation_tokens'];
+    if (cached is num) {
+      summary['cache_status'] = cached > 0 ? 'hit' : 'miss';
+    } else if (created is num) {
+      summary['cache_status'] = created > 0 ? 'miss' : 'unknown';
+    } else {
+      summary['cache_status'] = 'unknown';
+    }
+    return summary;
   }
 }
 
