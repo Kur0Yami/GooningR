@@ -224,4 +224,20 @@ void main() {
       expect(prompt, contains('"schema_version":2'));
     },
   );
+
+  test(
+    'contact request targets are included in the same LLM prompt snapshot',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = await AppController.load();
+      addTearDown(controller.dispose);
+      final prompt = controller.buildCharacterPrompt(
+        currentInput: '能否交换联系方式？',
+        contactRequestIds: const ['claudia'],
+      );
+      expect(prompt, contains('本轮应用根据点名或最近在场发言锁定联系请求目标'));
+      expect(prompt, contains('claudia='));
+      expect(prompt, contains('角色[精确 npc_id]'));
+    },
+  );
 }

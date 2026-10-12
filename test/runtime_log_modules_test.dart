@@ -30,6 +30,131 @@ void main() {
     await log.initialize();
     expect(log.entries, isEmpty);
   });
+  test('active feature sources route to their matching module', () {
+    const sources = <RuntimeLogModule, List<String>>{
+      RuntimeLogModule.llm: ['LLM', 'AI', 'AI suggestion', 'Agent'],
+      RuntimeLogModule.tts: [
+        'TTS',
+        'TTS loudness',
+        'TTS playback',
+        'Fish Audio 试音',
+        'Qwen-TTS 试音',
+        '通用 TTS 试音',
+      ],
+      RuntimeLogModule.expression: [
+        'plan_character_expression',
+        'ExpressionPlanner',
+      ],
+      RuntimeLogModule.action: ['plan_character_action', 'ActionPlanner'],
+      RuntimeLogModule.speech: ['SpeechPlanner'],
+      RuntimeLogModule.singing: ['SingingPlanner', 'plan_singing_performance'],
+      RuntimeLogModule.memory: ['Memory'],
+      RuntimeLogModule.translation: ['Translation'],
+      RuntimeLogModule.character: [
+        'Character',
+        'CharacterAssets',
+        'CharacterMotion',
+        'CharacterState',
+        'LipSync',
+        'SkinImport',
+        'Interaction',
+      ],
+      RuntimeLogModule.storage: [
+        'Persistence',
+        'NpcPersistence',
+        'TranslationPersistence',
+        'Data export',
+        'Data import',
+        'Legacy data conversion',
+        'Attachment',
+      ],
+      RuntimeLogModule.soundscape: ['Soundscape'],
+      RuntimeLogModule.alarm: ['Alarm'],
+      RuntimeLogModule.relay: ['PC Agent', 'RelayClient'],
+      RuntimeLogModule.system: [
+        'App',
+        'Camera',
+        'Flutter',
+        'Navigation',
+        'Platform',
+        'Startup',
+        'NewModule',
+      ],
+    };
+    for (final module in sources.entries) {
+      for (final source in module.value) {
+        expect(
+          RuntimeLogModule.forSource(source),
+          module.key,
+          reason: 'Source $source must remain in ${module.key.name}',
+        );
+      }
+    }
+  });
+  test('classification normalizes labels with explicit routing precedence', () {
+    const cases = <String, RuntimeLogModule>{
+      '  PLAN-CHARACTER-EXPRESSION / request  ': RuntimeLogModule.expression,
+      'action_planner:playback': RuntimeLogModule.action,
+      'Speech Planner / response': RuntimeLogModule.speech,
+      'Singing.Planner': RuntimeLogModule.singing,
+      'PLAN-SINGING-PERFORMANCE': RuntimeLogModule.singing,
+      'FishAudio/response': RuntimeLogModule.tts,
+      'TTS-playback': RuntimeLogModule.tts,
+      'Data_export': RuntimeLogModule.storage,
+      'translation.persistence': RuntimeLogModule.storage,
+      'Character Persistence': RuntimeLogModule.storage,
+      'npc_persistence': RuntimeLogModule.storage,
+      'Memory-refresh': RuntimeLogModule.memory,
+      'Translation:retry': RuntimeLogModule.translation,
+      'AI/suggestion': RuntimeLogModule.llm,
+      'PC_Agent/questions': RuntimeLogModule.relay,
+      'Relay Client': RuntimeLogModule.relay,
+      'Soundscape/playback': RuntimeLogModule.soundscape,
+      'Voice Alarm': RuntimeLogModule.alarm,
+      'Airplane': RuntimeLogModule.system,
+      'Unrecognized feature': RuntimeLogModule.system,
+      '': RuntimeLogModule.system,
+    };
+    for (final entry in cases.entries) {
+      expect(
+        RuntimeLogModule.forSource(entry.key),
+        entry.value,
+        reason: entry.key,
+      );
+    }
+  });
+  test(
+    'classification preserves legacy entries, source and stable identity',
+    () {
+      final original = RuntimeLogEntry(
+        id: 'saved-singing-entry',
+        timestamp: DateTime(2026, 10, 12),
+        level: RuntimeLogLevel.warning,
+        source: '  SingingPlanner  ',
+        message: 'singing request failed',
+        repeatCount: 2,
+        lastTimestamp: DateTime(2026, 10, 12, 0, 1),
+      );
+      final restored = RuntimeLogEntry.fromJson(original.toJson());
+      expect(restored.module, RuntimeLogModule.singing);
+      expect(restored.toJson(), original.toJson());
+      expect(restored.identity, original.identity);
+    },
+  );
+  test('new feature and unknown categories collect every severity', () {
+    final log = RuntimeLog.instance;
+    for (final source in ['SingingPlanner', 'Data export', 'NewModule']) {
+      for (final level in RuntimeLogLevel.values) {
+        log.add(level, source, '$source ${level.name} marker');
+      }
+    }
+    expect(log.entries.length, 9);
+    expect(log.entries.map((entry) => entry.module), [
+      ...List.filled(3, RuntimeLogModule.singing),
+      ...List.filled(3, RuntimeLogModule.storage),
+      ...List.filled(3, RuntimeLogModule.system),
+    ]);
+  });
   test('action info is sampled by category without suppressing warnings', () {
     final log = RuntimeLog.instance;
     log.infoRateLimited('ActionPlanner', 'motion-start', 'first');
@@ -142,6 +267,8 @@ void main() {
     );
     expect(find.text('llm marker'), findsOneWidget);
     expect(find.text('tts marker'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('runtime-log-filter-toggle')));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'TTS'));
     await tester.pumpAndSettle();
     expect(find.text('llm marker'), findsNothing);

@@ -8,6 +8,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('search opens previously collapsed matching history', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final controller = (await tester.runAsync(() => AppController.load()))!;
+    addTearDown(controller.dispose);
+    controller.addUserMessage('可搜索的旧事实');
+    await tester.runAsync(() => controller.saveToLocalSlot(0, name: '历史测试'));
+    await tester.pumpWidget(
+      MaterialApp(home: ConversationHistoryPage(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('可搜索的旧事实'), findsNothing);
+    await tester.enterText(find.byType(TextField), '旧事实');
+    await tester.pumpAndSettle();
+    expect(find.text('可搜索的旧事实'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('history keeps only user, narration and Ryza visible text', () {
     final entries = visibleConversationHistory(const [
       ChatMessage(text: '旁白：你把瓶子放在桌上\n发言：帮我看看\n旁白：你安静等着', isUser: true),

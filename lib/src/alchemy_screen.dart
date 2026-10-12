@@ -51,6 +51,7 @@ class _AlchemyScreenState extends State<AlchemyScreen> {
       useRootNavigator: false,
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: Text(language.text('使用物品', 'Use item', 'アイテムを使う')),
         content: Text(
           language.text(
@@ -94,6 +95,7 @@ class _AlchemyScreenState extends State<AlchemyScreen> {
       useRootNavigator: false,
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: Text(item.name(language)),
         content: Text(
           '${item.description(language)}\n\n${item.effect(language)}',

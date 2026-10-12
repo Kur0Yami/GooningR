@@ -8,7 +8,7 @@ AgentAtelierR 是以 Android 为主要开发平台的 Flutter AI 角色互动项
 
 ## 当前版本与适用范围
 
-当前源码版本为 **AgentAtelierR 1.0.4 正式版**，Android 版本号 `1.0.4+41`；Android APK 和 Windows ZIP 更新到 GitHub 的 `AgentAtelierR 1.0.4 正式版` Release。以下功能以当前源码为准；具体效果会受到本地资源、设备、模型和服务能力影响。
+当前源码版本为 **AgentAtelierR 1.0.4 正式版**，Android / Windows 版本号 `1.0.4+42`；Android APK 和 Windows ZIP 更新到 GitHub 的 `AgentAtelierR 1.0.4 正式版` Release。以下功能以当前源码为准；具体效果会受到本地资源、设备、模型和服务能力影响。
 
 > 正式版提供使用加密构建脚本生成的 **release APK**，启用 Dart 混淆。当前仍沿用 Android 调试签名以兼容已有安装，并非商店正式签名包。旧版 debug 测试包的卡顿与不稳定表现不能代表 release 包。
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -74,6 +75,8 @@ class _RelayChatPageState extends State<RelayChatPage> {
   final _scroll = ScrollController();
   String? _profileId, _sessionId, _workspaceId, _error, _newActionId;
   bool _sending = false, _refreshing = false;
+  // Switching away and back is still a new view, even with identical IDs.
+  int _viewRevision = 0;
   (String?, String?)? _scrollScope;
   int? _messageSignature;
   bool _initialScroll = true, _followTail = true, _programmaticScroll = false;
@@ -210,6 +213,7 @@ class _RelayChatPageState extends State<RelayChatPage> {
 
   void _chooseProfile(String id) {
     setState(() {
+      _viewRevision++;
       _profileId = id;
       _sessionId = null;
       _workspaceId = null;
@@ -224,6 +228,7 @@ class _RelayChatPageState extends State<RelayChatPage> {
   void _newConversation() {
     _scaffold.currentState?.closeDrawer();
     setState(() {
+      _viewRevision++;
       _sessionId = null;
       _workspaceId = null;
       _error = null;
@@ -235,6 +240,7 @@ class _RelayChatPageState extends State<RelayChatPage> {
   Future<void> _selectSession(String id) async {
     _scaffold.currentState?.closeDrawer();
     setState(() {
+      _viewRevision++;
       _sessionId = id;
       _workspaceId = null;
       _error = null;
@@ -319,12 +325,19 @@ class _RelayChatPageState extends State<RelayChatPage> {
     final profile = _profile!;
     final prompt = _prompt.text.trim();
     final profileId = _profileId!, sessionId = _sessionId;
+    final viewRevision = _viewRevision;
+    bool isCurrentView() =>
+        mounted &&
+        _viewRevision == viewRevision &&
+        _profileId == profileId &&
+        _sessionId == sessionId;
     final accepted = await showDialog<bool>(
       context: context,
       useRootNavigator: false,
       builder: (context) => AlertDialog(
         backgroundColor: _dialogColor(context),
         surfaceTintColor: Colors.transparent,
+        scrollable: true,
         title: const Text('向 PC 发送任务？'),
         content: SingleChildScrollView(
           child: Text(
@@ -344,7 +357,7 @@ class _RelayChatPageState extends State<RelayChatPage> {
         ],
       ),
     );
-    if (accepted != true || !mounted || !_canSend) return;
+    if (accepted != true || !isCurrentView() || !_canSend) return;
     setState(() {
       _sending = true;
       _error = null;
@@ -356,13 +369,15 @@ class _RelayChatPageState extends State<RelayChatPage> {
         sessionId: sessionId,
         workspaceId: _workspaceId,
       );
-      if (mounted) {
+      if (isCurrentView()) {
+        // The durable outbox tracks the old task after navigation; its result
+        // must not clear another view or trigger that view's conversation jump.
         _prompt.clear();
         if (sessionId == null) _newActionId = actionId;
         _followAcceptedNewConversation();
       }
     } on Object catch (error) {
-      if (mounted) setState(() => _error = safeRelayError(error));
+      if (isCurrentView()) setState(() => _error = safeRelayError(error));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -439,26 +454,44 @@ class _RelayChatPageState extends State<RelayChatPage> {
             ],
           ),
           drawer: _historyDrawer(context),
-          body: Column(
-            children: [
-              _connectionHeader(context),
-              if (_refreshing) const LinearProgressIndicator(minHeight: 2),
-              Expanded(child: _conversationBody(context)),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
+          body: LayoutBuilder(
+            builder: (context, constraints) => Column(
+              children: [
+                _connectionHeader(context),
+                if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+                Expanded(child: _conversationBody(context)),
+                // A keyboard, large text or a pending task can leave very
+                // little room. Keep the composer scrollable without consuming
+                // the entire conversation area or hiding its status message.
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: math.min(300, constraints.maxHeight * .6),
                   ),
-                  child: Text(
-                    _error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+                  child: SingleChildScrollView(
+                    key: const ValueKey('relay-chat-composer-scroll'),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_error != null)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            child: Text(
+                              _error!,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                          ),
+                        _composer(context),
+                      ],
                     ),
                   ),
                 ),
-              _composer(context),
-            ],
+              ],
+            ),
           ),
         ),
       );

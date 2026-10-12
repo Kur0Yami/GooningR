@@ -3113,20 +3113,28 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Iterable<String> _recentNpcIdsFromMainDialogue() {
-    final latest = widget.controller.messages
+    final recent = widget.controller.messages
         .where(
           (message) =>
               !message.isUser &&
               !message.isFailure &&
               message.text.trim().isNotEmpty,
         )
-        .lastOrNull;
-    if (latest == null) return const [];
-    return NpcContactRequestDetector.speakingContactIds(
-      latest.text,
-      contacts: widget.controller.npcChatContacts,
-      primaryCharacterId: widget.controller.activeCharacterId,
-    );
+        .toList(growable: false);
+    final ids = <String>{};
+    // A scene response can end in a narrator or Ryza line. Keep a small,
+    // recent window so an NPC that spoke just before that tail remains the
+    // target, but refuse to guess when multiple NPCs are present.
+    for (final message in recent.reversed.take(3)) {
+      ids.addAll(
+        NpcContactRequestDetector.speakingContactIds(
+          message.text,
+          contacts: widget.controller.npcChatContacts,
+          primaryCharacterId: widget.controller.activeCharacterId,
+        ),
+      );
+    }
+    return ids.length == 1 ? List<String>.unmodifiable(ids) : const [];
   }
 
   NpcContactRequest? _takeContactFollowUp() {
@@ -3207,7 +3215,14 @@ class _ChatScreenState extends State<ChatScreen> {
             contacts: widget.controller.npcChatContacts,
             fallbackContactIds: _recentNpcIdsFromMainDialogue(),
             precedingRequest: precedingContactRequest,
+            allowUnresolvedTarget: true,
           );
+    if (contactRequest != null) {
+      RuntimeLog.instance.info(
+        'CharacterContacts',
+        '联系请求已识别：channel=${contactRequest.channel.name}，targets=${contactRequest.contactIds.join(',')}，待 NPC 本人回应',
+      );
+    }
     final contactRequestRevision = widget.controller.dataRevision;
     final contactRequestCharacter = widget.controller.activeCharacterId;
     if (!isAutomatic) _recordUserActivity();
@@ -3337,6 +3352,7 @@ class _ChatScreenState extends State<ChatScreen> {
             independentPerformance: true,
             currentInput: text,
             performanceContext: _buildPerformancePromptContext(),
+            contactRequestIds: contactRequest?.contactIds ?? const [],
           ),
           messages: widget.controller.contextMessagesForModel(
             pending: isAutomatic ? ChatMessage(text: text, isUser: true) : null,
@@ -3364,6 +3380,10 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       if (generation != _replyGeneration) return;
       var reply = widget.controller.messages.last.text;
+      reply = NpcContactRequestDetector.normalizeContactSpeakers(
+        reply,
+        widget.controller.npcChatContacts,
+      );
       reply = await ensureAssistantReplyLanguages(
         source: reply,
         replyLanguage: requestReplyLanguage,
@@ -3694,7 +3714,7 @@ class _ChatScreenState extends State<ChatScreen> {
     required int expectedRevision,
     required String primaryCharacterId,
   }) async {
-    if (!mounted || widget.controller.dataRevision != expectedRevision) {
+    if (!_conversationIsCurrent(primaryCharacterId, expectedRevision)) {
       return;
     }
     final acceptedIds = NpcContactRequestDetector.acceptedContactIds(
@@ -3702,6 +3722,10 @@ class _ChatScreenState extends State<ChatScreen> {
       request,
       primaryCharacterId: primaryCharacterId,
       contacts: widget.controller.npcChatContacts,
+    );
+    RuntimeLog.instance.info(
+      'CharacterContacts',
+      '联系请求回复判定：requested=${request.contactIds.join(',')}，speakers=${NpcContactRequestDetector.speakingContactIds(reply, contacts: widget.controller.npcChatContacts, primaryCharacterId: primaryCharacterId).join(',')}，accepted=${acceptedIds.join(',')}',
     );
     final contacts = acceptedIds
         .map(
@@ -3725,6 +3749,7 @@ class _ChatScreenState extends State<ChatScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: Text(language.text('添加联系人', 'Add contact', '連絡先を追加')),
+          scrollable: true,
           content: Text(
             language.text(
               '${contact.names.chinese}同意通过$channel联系。要将其加入虚拟手机的信息联系人吗？',
@@ -3764,7 +3789,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (!mounted ||
         selectedId == null ||
-        widget.controller.dataRevision != expectedRevision) {
+        !_conversationIsCurrent(primaryCharacterId, expectedRevision)) {
       return;
     }
     if (widget.controller.addNpcContact(selectedId)) {
@@ -5032,8 +5057,10 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
     var currentSpeaker = 0;
-    final segments = parseAssistantSegments(response)
-        .where((segment) => displayTextForAssistantSegment(segment).isNotEmpty);
+    final segments = parseAssistantSegments(
+      response,
+      defaultPrimaryCharacterId: widget.controller.activeCharacterId,
+    ).where((segment) => displayTextForAssistantSegment(segment).isNotEmpty);
     var displayIndex = 0;
     for (final segment in segments) {
       final matchesSpeaker = speaker == ChatSpeaker.ryza
@@ -5100,9 +5127,10 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       final active = _activeAssistantSegmentIndex;
-      final sourceSegments = parseAssistantSegments(message.text)
-          .where((s) => displayTextForAssistantSegment(s).isNotEmpty)
-          .toList();
+      final sourceSegments = parseAssistantSegments(
+        message.text,
+        defaultPrimaryCharacterId: widget.controller.activeCharacterId,
+      ).where((s) => displayTextForAssistantSegment(s).isNotEmpty).toList();
       final activeSpeaker =
           active != null && active >= 0 && active < sourceSegments.length
           ? sourceSegments[active].speaker
@@ -5502,9 +5530,9 @@ class _ChatScreenState extends State<ChatScreen> {
       backgroundColor: Colors.transparent,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        backgroundColor: glass
-            ? Colors.transparent
-            : glassPageHeaderColor(context),
+        // These pages sit on the phone route's black base. Keep the header
+        // readable in the light theme even when the body uses liquid glass.
+        backgroundColor: glassPageHeaderColor(context),
         title: Padding(
           padding: const EdgeInsets.only(left: 40),
           child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -6206,6 +6234,7 @@ class _ChatScreenState extends State<ChatScreen> {
               onMenuPressed: widget.onMenuPressed,
               phoneButton: VirtualPhoneLauncher(
                 language: widget.controller.interfaceLanguage,
+                languageBuilder: () => widget.controller.interfaceLanguage,
                 liquidGlass: liquidGlass,
                 wallpapers: widget.controller.virtualPhoneWallpapers,
                 liquidGlassBuilder: () => widget.controller.liquidGlassChatUi,
@@ -6430,7 +6459,10 @@ class _ChatScreenState extends State<ChatScreen> {
         : (latest.isUser ? latest.text : _glassMessageText(latest));
     final segmentCount = latest == null || latest.isUser
         ? 1
-        : parseAssistantSegments(latest.displayText)
+        : parseAssistantSegments(
+                latest.displayText,
+                defaultPrimaryCharacterId: widget.controller.activeCharacterId,
+              )
               .where(
                 (segment) => displayTextForAssistantSegment(segment).isNotEmpty,
               )
@@ -8583,7 +8615,10 @@ class _SeparatedAssistantMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final runs = groupAssistantSegmentsForDisplay(response);
+    final runs = groupAssistantSegmentsForDisplay(
+      response,
+      defaultPrimaryCharacterId: characterProfile?.id ?? 'ryza',
+    );
     var segmentOffset = 0;
     final children = <Widget>[];
     for (var index = 0; index < runs.length; index++) {
@@ -8608,6 +8643,8 @@ class _SeparatedAssistantMessage extends StatelessWidget {
         children.add(
           _CharacterRun(
             segments: run,
+            primaryCharacterId:
+                characterProfile?.id ?? CharacterRuntimeIds.ryza,
             onSpeechText:
                 onSpeechText != null &&
                     isKlaudiaSpeechSegment(
@@ -8804,6 +8841,7 @@ class _RyzaRun extends StatelessWidget {
 class _CharacterRun extends StatelessWidget {
   const _CharacterRun({
     required this.segments,
+    required this.primaryCharacterId,
     this.onSpeechText,
     required this.language,
     required this.glass,
@@ -8813,6 +8851,7 @@ class _CharacterRun extends StatelessWidget {
   });
 
   final List<ChatSegment> segments;
+  final String primaryCharacterId;
   final ValueChanged<String>? onSpeechText;
   final AppLanguage language;
   final bool glass;
@@ -8824,8 +8863,14 @@ class _CharacterRun extends StatelessWidget {
   Widget build(BuildContext context) {
     final id = segments.first.characterId ?? 'unknown';
     final catalog = CharacterCatalog.current;
-    final profile = catalog?.profile(id);
-    final contact = id.startsWith('sophie_')
+    final profile =
+        primaryCharacterId == CharacterRuntimeIds.ryza &&
+            !id.startsWith('sophie_')
+        ? catalog?.profile(id)
+        : null;
+    final contact =
+        primaryCharacterId == CharacterRuntimeIds.sophie &&
+            id.startsWith('sophie_')
         ? npcChatContactsFor(
             CharacterRuntimeIds.sophie,
             catalog ?? CharacterCatalog.empty(),
@@ -8833,7 +8878,7 @@ class _CharacterRun extends StatelessWidget {
         : null;
     final name =
         contact?.names.forLanguage(language) ??
-        catalog?.displayName(id, language) ??
+        profile?.names.forLanguage(language) ??
         id;
     final avatarAsset = contact?.avatarAsset ?? profile?.avatarAsset;
     final fallbackColor = glass

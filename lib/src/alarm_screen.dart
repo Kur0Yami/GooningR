@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:alarm/alarm.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -12,6 +13,20 @@ import 'character_alarm_coordinator.dart';
 import 'character_runtime_profile.dart';
 import 'glass_ui.dart';
 import 'runtime_log.dart';
+
+/// Schedule the next occurrence using the time when both pickers are confirmed.
+DateTime nextVoiceAlarmTime(Duration timeOfDay, DateTime now) {
+  DateTime onDay(int day) => DateTime(
+    now.year,
+    now.month,
+    day,
+    timeOfDay.inHours,
+    timeOfDay.inMinutes.remainder(60),
+    timeOfDay.inSeconds.remainder(60),
+  );
+  final today = onDay(now.day);
+  return today.isAfter(now) ? today : onDay(now.day + 1);
+}
 
 class AlarmScreen extends StatefulWidget {
   const AlarmScreen({
@@ -32,6 +47,11 @@ class AlarmScreen extends StatefulWidget {
 class _AlarmScreenState extends State<AlarmScreen> {
   List<AlarmSettings> _alarms = const [];
   StreamSubscription<dynamic>? _subscription;
+  bool _addingAlarm = false;
+  bool get _supportsVoiceAlarms =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
   bool get _hasVoiceResources =>
       widget.controller.activeCharacterId == CharacterRuntimeIds.ryza;
 
@@ -49,7 +69,7 @@ class _AlarmScreenState extends State<AlarmScreen> {
   }
 
   Future<void> _refresh() async {
-    if (!_hasVoiceResources) {
+    if (!_supportsVoiceAlarms || !_hasVoiceResources) {
       if (mounted && _alarms.isNotEmpty) setState(() => _alarms = const []);
       return;
     }
@@ -59,99 +79,127 @@ class _AlarmScreenState extends State<AlarmScreen> {
   }
 
   Future<void> _addAlarm() async {
-    if (!_hasVoiceResources) return;
+    if (_addingAlarm || !_supportsVoiceAlarms || !_hasVoiceResources) return;
+    setState(() => _addingAlarm = true);
     final language = widget.controller.interfaceLanguage;
-    await Permission.notification.request();
-    final exactAlarmStatus = await Permission.scheduleExactAlarm.request();
-    if (!exactAlarmStatus.isGranted && !exactAlarmStatus.isLimited) {
-      RuntimeLog.instance.warning('Alarm', '精确闹钟权限未授予');
+    int? attemptedAlarmId;
+    var accepted = false;
+    try {
+      await Permission.notification.request();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            language.text(
-              '需要“闹钟和提醒”权限才能准时响铃',
-              'Alarm permission is required to ring on time',
-              '正確な時刻に鳴らすにはアラーム権限が必要です',
+      final exactAlarmStatus = await Permission.scheduleExactAlarm.request();
+      if (!exactAlarmStatus.isGranted && !exactAlarmStatus.isLimited) {
+        RuntimeLog.instance.warning('Alarm', '精确闹钟权限未授予');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              language.text(
+                '需要“闹钟和提醒”权限才能准时响铃',
+                'Alarm permission is required to ring on time',
+                '正確な時刻に鳴らすにはアラーム権限が必要です',
+              ),
             ),
           ),
+        );
+        return;
+      }
+
+      if (!mounted) return;
+      final selectedDuration = await _pickAlarmTime(DateTime.now(), language);
+      if (selectedDuration == null || !mounted) return;
+      final reminderType = await _selectReminderType(language);
+      if (reminderType == null || !mounted || !_hasVoiceResources) return;
+      final dateTime = nextVoiceAlarmTime(selectedDuration, DateTime.now());
+      final selected = TimeOfDay(
+        hour: selectedDuration.inHours,
+        minute: selectedDuration.inMinutes.remainder(60),
+      );
+      var alarmId = DateTime.now().microsecondsSinceEpoch.remainder(1000000000);
+      while (alarmId == 0 || _alarms.any((alarm) => alarm.id == alarmId)) {
+        alarmId = (alarmId + 1).remainder(1000000000);
+      }
+      final audioAsset = alarmVoiceAsset(
+        language: widget.controller.characterReplyLanguage,
+        type: reminderType,
+        asmr: widget.controller.asmrModeEnabled,
+        hour: selected.hour,
+        variantSeed: alarmId,
+      );
+
+      final settings = AlarmSettings(
+        id: alarmId,
+        dateTime: dateTime,
+        assetAudioPath: audioAsset,
+        payload: CharacterAlarmCoordinator.ryzaVoicePayload,
+        loopAudio: true,
+        allowSameSecondScheduling: true,
+        vibrate: true,
+        androidFullScreenIntent: true,
+        volumeSettings: VolumeSettings.fade(
+          volume: 0.85,
+          fadeDuration: const Duration(seconds: 4),
+        ),
+        androidSnoozeDuration: const Duration(minutes: 5),
+        notificationSettings: NotificationSettings(
+          title: language.text(
+            '莱莎的${reminderType.label(language)}',
+            'Ryza: ${reminderType.label(language)}',
+            'ライザ・${reminderType.label(language)}',
+          ),
+          body: reminderType.description(language),
+          stopButton: language.text('停止', 'Stop', '停止'),
+          androidSnoozeButton: language.text('稍后提醒', 'Snooze', 'スヌーズ'),
+          androidStopAlarmOnDismiss: false,
         ),
       );
-      return;
-    }
-
-    if (!mounted) return;
-    final now = DateTime.now();
-    final selectedDuration = await _pickAlarmTime(now, language);
-    if (selectedDuration == null) return;
-    final selected = TimeOfDay(
-      hour: selectedDuration.inHours,
-      minute: selectedDuration.inMinutes.remainder(60),
-    );
-    var dateTime = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      selected.hour,
-      selected.minute,
-      selectedDuration.inSeconds.remainder(60),
-    );
-    if (!dateTime.isAfter(now)) {
-      dateTime = dateTime.add(const Duration(days: 1));
-    }
-    if (!mounted) return;
-    final reminderType = await _selectReminderType(language);
-    if (reminderType == null || !_hasVoiceResources) return;
-
-    final alarmId = DateTime.now().millisecondsSinceEpoch.remainder(1000000000);
-    final audioAsset = alarmVoiceAsset(
-      language: widget.controller.characterReplyLanguage,
-      type: reminderType,
-      asmr: widget.controller.asmrModeEnabled,
-      hour: selected.hour,
-      variantSeed: alarmId,
-    );
-
-    final settings = AlarmSettings(
-      id: alarmId,
-      dateTime: dateTime,
-      assetAudioPath: audioAsset,
-      payload: CharacterAlarmCoordinator.ryzaVoicePayload,
-      loopAudio: true,
-      allowSameSecondScheduling: true,
-      vibrate: true,
-      androidFullScreenIntent: true,
-      volumeSettings: VolumeSettings.fade(
-        volume: 0.85,
-        fadeDuration: const Duration(seconds: 4),
-      ),
-      androidSnoozeDuration: const Duration(minutes: 5),
-      notificationSettings: NotificationSettings(
-        title: language.text(
-          '莱莎的${reminderType.label(language)}',
-          'Ryza: ${reminderType.label(language)}',
-          'ライザ・${reminderType.label(language)}',
-        ),
-        body: reminderType.description(language),
-        stopButton: language.text('停止', 'Stop', '停止'),
-        androidSnoozeButton: language.text('稍后提醒', 'Snooze', 'スヌーズ'),
-        androidStopAlarmOnDismiss: false,
-      ),
-    );
-    final success = await Alarm.set(alarmSettings: settings);
-    if (success) {
+      attemptedAlarmId = alarmId;
+      accepted = await Alarm.set(alarmSettings: settings);
+      if (!accepted) throw StateError('Alarm.set returned false');
       RuntimeLog.instance.info(
         'Alarm',
         '闹钟设置成功，时间=${dateTime.toIso8601String()} '
             '类型=${reminderType.name} 语音=$audioAsset',
       );
-    } else {
-      RuntimeLog.instance.warning('Alarm', 'Alarm.set 返回失败');
+      await _refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(language.text('闹钟已设置', 'Alarm set', 'アラームを設定しました')),
+        ),
+      );
+    } on Object catch (error, stack) {
+      if (attemptedAlarmId != null && !accepted) {
+        // The plugin saves before calling Android. Remove that incomplete save
+        // and cancel the same ID before the user retries.
+        try {
+          await Alarm.stop(attemptedAlarmId);
+        } on Object catch (cleanupError, cleanupStack) {
+          RuntimeLog.instance.error('Alarm', cleanupError, cleanupStack);
+        }
+      }
+      RuntimeLog.instance.error('Alarm', error, stack);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accepted
+                ? language.text(
+                    '闹钟已设置，但列表刷新失败',
+                    'Alarm set, but the list could not refresh',
+                    '設定できましたが一覧を更新できませんでした',
+                  )
+                : language.text(
+                    '闹钟设置失败，请重试',
+                    'Could not set alarm. Try again.',
+                    'アラームを設定できませんでした。再試行してください',
+                  ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _addingAlarm = false);
     }
-    await _refresh();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(success ? '闹钟已设置' : '闹钟设置失败')));
   }
 
   Future<Duration?> _pickAlarmTime(DateTime now, AppLanguage language) {
@@ -177,7 +225,8 @@ class _AlarmScreenState extends State<AlarmScreen> {
               ? const Color(0xE824282C)
               : const Color(0xE8F1F3F4),
           borderRadius: BorderRadius.circular(26),
-          child: Padding(
+          child: SingleChildScrollView(
+            key: const ValueKey('alarm-time-picker-scroll'),
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -310,7 +359,7 @@ class _AlarmScreenState extends State<AlarmScreen> {
   @override
   Widget build(BuildContext context) {
     final language = widget.controller.interfaceLanguage;
-    if (!_hasVoiceResources) {
+    if (!_supportsVoiceAlarms || !_hasVoiceResources) {
       return Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
@@ -324,15 +373,32 @@ class _AlarmScreenState extends State<AlarmScreen> {
         body: GlassPageSurface(
           liquidGlass: widget.controller.liquidGlassChatUi,
           child: Center(
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
-              child: Text(
-                language.text(
-                  '苏菲的语音闹钟资源尚未提供',
-                  'Sophie voice alarms are not available yet',
-                  'ソフィーの音声アラームはまだ利用できません',
-                ),
-                textAlign: TextAlign.center,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (!_supportsVoiceAlarms)
+                    Text(
+                      language.text(
+                        '本平台暂不支持定时语音闹钟',
+                        'Scheduled voice alarms are not supported on this platform yet',
+                        'このプラットフォームでは時刻指定のボイスアラームはまだ利用できません',
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  if (!_supportsVoiceAlarms && !_hasVoiceResources)
+                    const SizedBox(height: 12),
+                  if (!_hasVoiceResources)
+                    Text(
+                      language.text(
+                        '苏菲的语音闹钟资源尚未提供',
+                        'Sophie voice alarms are not available yet',
+                        'ソフィーの音声アラームはまだ利用できません',
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                ],
               ),
             ),
           ),
@@ -351,7 +417,7 @@ class _AlarmScreenState extends State<AlarmScreen> {
       ),
       floatingActionButton: GlassIconButton(
         liquidGlass: widget.controller.liquidGlassChatUi,
-        onPressed: _addAlarm,
+        onPressed: _addingAlarm ? null : _addAlarm,
         tooltip: language.text('添加闹钟', 'Add alarm', 'アラームを追加'),
         icon: Icons.add_alarm_outlined,
         size: 52,

@@ -101,6 +101,7 @@ Future<void> _mount(
   double textScale = 1,
   ValueNotifier<bool>? glass,
   ValueNotifier<bool>? globalGlass,
+  ValueNotifier<AppLanguage>? language,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -122,9 +123,10 @@ Future<void> _mount(
               ),
       ),
       home: VirtualPhoneLauncher(
-        language: AppLanguage.chinese,
+        language: language?.value ?? AppLanguage.chinese,
+        languageBuilder: language == null ? null : () => language.value,
         liquidGlass: false,
-        updates: glass,
+        updates: Listenable.merge([?glass, ?language]),
         liquidGlassBuilder: glass == null ? null : () => glass.value,
         homeInfo: _homeInfo,
         pages: {
@@ -180,6 +182,36 @@ void _expectGreyFallback(WidgetTester tester, Finder surface) {
 }
 
 void main() {
+  testWidgets('an open phone follows interface language changes', (
+    tester,
+  ) async {
+    final language = ValueNotifier(AppLanguage.chinese);
+    addTearDown(language.dispose);
+    await _mount(tester, language: language);
+    expect(find.text('角色状态'), findsOneWidget);
+    await tester.tap(_app(VirtualPhoneApp.status));
+    await tester.pumpAndSettle();
+    language.value = AppLanguage.english;
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<Tooltip>(
+            find.descendant(of: _back, matching: find.byType(Tooltip)).first,
+          )
+          .message,
+      'Back',
+    );
+    await tester.tap(_back);
+    await tester.pumpAndSettle();
+    expect(find.text('Status'), findsOneWidget);
+    expect(find.text('当前位置'), findsNothing);
+    expect(find.text('Location'), findsOneWidget);
+    final signal = tester.widget<Image>(
+      find.byKey(const ValueKey('virtual-phone-signal')),
+    );
+    expect(signal.semanticLabel, startsWith('LLM signal:'));
+    expect(tester.takeException(), isNull);
+  });
   for (final returnWithSystem in [false, true]) {
     testWidgets(
       'status bar switches from carrier to time and back (system=$returnWithSystem)',

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ryza_chat_mvp/src/app_controller.dart';
 import 'package:ryza_chat_mvp/src/character_camera.dart';
+import 'package:ryza_chat_mvp/src/character_catalog.dart';
 import 'package:ryza_chat_mvp/src/chat_screen.dart';
 import 'package:ryza_chat_mvp/src/npc_messages_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -39,6 +40,48 @@ void main() {
     (widget) =>
         widget is TextField && widget.decoration?.hintText == '和苏菲说点什么…',
   );
+
+  testWidgets(
+    'Sophie dialogue never borrows avatar or name metadata from Ryza contacts',
+    (tester) async {
+      final controller = await mountComposer(tester);
+      await tester.runAsync(CharacterCatalog.load);
+      controller.addAssistantMessage('角色[fee]：一个未属于此人物世界的发言。');
+      await tester.pump();
+      expect(find.text('fee'), findsWidgets);
+      expect(find.text('菲'), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Image &&
+              widget.image is AssetImage &&
+              (widget.image as AssetImage).assetName.endsWith('/fee.png'),
+        ),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('phone detail header remains readable with light liquid glass', (
+    tester,
+  ) async {
+    final controller = await mountComposer(tester);
+    controller.setLiquidGlassChatUi(true);
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.smartphone_rounded));
+    await tester.pump(const Duration(milliseconds: 260));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('virtual-phone-app-status')));
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pump();
+    final bar = tester.widget<AppBar>(
+      find.ancestor(of: find.text('角色状态'), matching: find.byType(AppBar)),
+    );
+    expect(bar.backgroundColor, isNot(Colors.transparent));
+    expect(bar.backgroundColor!.computeLuminance(), greaterThan(.8));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('real chat screen phone messages app opens NPC contacts', (
     tester,

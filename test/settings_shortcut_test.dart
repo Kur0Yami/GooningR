@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ryza_chat_mvp/src/app_controller.dart';
 import 'package:ryza_chat_mvp/src/glass_ui.dart';
 import 'package:ryza_chat_mvp/src/settings_screen.dart';
+import 'package:ryza_chat_mvp/src/virtual_phone.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -160,6 +161,67 @@ void main() {
     },
   );
 
+  testWidgets(
+    'embedded settings uses one back button for category and phone home',
+    (tester) async {
+      final controller = (await tester.runAsync(() => AppController.load()))!;
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: VirtualPhoneLauncher(
+            language: controller.interfaceLanguage,
+            liquidGlass: false,
+            fullBleedApps: const {VirtualPhoneApp.settings},
+            pages: {
+              VirtualPhoneApp.settings: (_) => SettingsScreen(
+                controller: controller,
+                onMenuPressed: () {},
+                embedded: true,
+              ),
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.byIcon(Icons.smartphone_rounded));
+      await tester.pumpAndSettle();
+      final settingsApp = find.byKey(
+        const ValueKey('virtual-phone-app-settings'),
+      );
+      await tester.ensureVisible(settingsApp);
+      await tester.tap(settingsApp);
+      await tester.pumpAndSettle();
+      final category = find.byKey(
+        const ValueKey('settings-category-appearance'),
+      );
+      await tester.ensureVisible(category);
+      await tester.tap(category);
+      await tester.pumpAndSettle();
+      expect(find.text('主题'), findsOneWidget);
+      expect(find.byKey(const ValueKey('virtual-phone-back')), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_back_rounded), findsNothing);
+      expect(find.byTooltip('返回设置'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('virtual-phone-back')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('settings-category-appearance')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('virtual-phone-back')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('virtual-phone-home-clock')),
+        findsNothing,
+      );
+      await tester.tap(find.byKey(const ValueKey('virtual-phone-back')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('virtual-phone-home-clock')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('virtual-phone-back')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final systemBack in [true, false]) {
     testWidgets('shortcut root returns to phone home (system=$systemBack)', (
       tester,
@@ -170,33 +232,42 @@ void main() {
         MaterialApp(
           home: Builder(
             builder: (context) => Scaffold(
-              body: TextButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => SettingsScreen(
-                      controller: controller,
-                      onMenuPressed: () {},
-                      embedded: true,
-                      initialSection: SettingsSection.audio,
-                    ),
+              body: VirtualPhoneLauncher(
+                language: controller.interfaceLanguage,
+                liquidGlass: false,
+                fullBleedApps: const {VirtualPhoneApp.shortcut},
+                pages: {
+                  VirtualPhoneApp.shortcut: (_) => SettingsScreen(
+                    controller: controller,
+                    onMenuPressed: () {},
+                    embedded: true,
+                    initialSection: SettingsSection.audio,
                   ),
-                ),
-                child: const Text('phone-home'),
+                },
               ),
             ),
           ),
         ),
       );
-      await tester.tap(find.text('phone-home'));
+      await tester.tap(find.byIcon(Icons.smartphone_rounded));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('virtual-phone-app-shortcut')),
+      );
       await tester.pumpAndSettle();
       expect(find.text('点击语音'), findsOneWidget);
+      expect(find.byKey(const ValueKey('virtual-phone-back')), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_back_rounded), findsNothing);
       if (systemBack) {
         await tester.binding.handlePopRoute();
       } else {
-        await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+        await tester.tap(find.byKey(const ValueKey('virtual-phone-back')));
       }
       await tester.pumpAndSettle();
-      expect(find.text('phone-home'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('virtual-phone-home-clock')),
+        findsOneWidget,
+      );
       expect(find.text('点击语音'), findsNothing);
       expect(
         find.byKey(const ValueKey('settings-character-switcher')),

@@ -369,7 +369,9 @@ class WorldMapScreen extends StatefulWidget {
     String areaId,
   ) => _readyFutures.putIfAbsent(areaId, () async {
     final data = await _dataFuture();
-    if (!context.mounted) throw StateError('World map preload context disposed');
+    if (!context.mounted) {
+      throw StateError('World map preload context disposed');
+    }
     if (data.areas.isEmpty) throw const FormatException('Empty world map');
     final area = data.areas.firstWhere(
       (candidate) => candidate.id == areaId,
@@ -531,10 +533,7 @@ class WorldMapScreenState extends State<WorldMapScreen>
           begin: _mapTransform.value,
           end: _cameraMatrix(point, scale),
         ).animate(
-          CurvedAnimation(
-            parent: _cameraController,
-            curve: Curves.easeInOutCubic,
-          ),
+          _cameraController.drive(CurveTween(curve: Curves.easeInOutCubic)),
         );
     _cameraController.forward(from: 0);
   }
@@ -1154,6 +1153,11 @@ class _FieldFocusOverlay extends StatelessWidget {
               npc.name,
         )
         .join(' / ');
+    final npcPreviewLabel = language.text(
+      '可能遇见：$localizedNpcNames',
+      'May meet: $localizedNpcNames',
+      '会えるかも：$localizedNpcNames',
+    );
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1179,6 +1183,7 @@ class _FieldFocusOverlay extends StatelessWidget {
                 if (index != null) onStageSelected(field.stages[index]);
               },
               child: SizedBox(
+                key: const ValueKey('world-map-focused-field'),
                 width: width,
                 height: height,
                 child: Stack(
@@ -1253,26 +1258,28 @@ class _FieldFocusOverlay extends StatelessWidget {
                     if (previewNpcs.isNotEmpty)
                       Positioned(
                         left: 14,
+                        right: 14,
                         top: 14,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.58),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: Colors.white24),
-                          ),
-                          child: Text(
-                            language.text(
-                              '可能遇见：$localizedNpcNames',
-                              'May meet: $localizedNpcNames',
-                              '会えるかも：$localizedNpcNames',
+                        child: Tooltip(
+                          message: npcPreviewLabel,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
                             ),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.58),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white24),
+                            ),
+                            child: Text(
+                              npcPreviewLabel,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
                         ),

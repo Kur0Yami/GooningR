@@ -257,7 +257,7 @@ class SettingsScreenState extends State<SettingsScreen> {
           padding: EdgeInsets.only(left: widget.embedded ? 40 : 58),
           child: Row(
             children: [
-              if (_category != null)
+              if (_category != null && !widget.embedded)
                 IconButton(
                   onPressed: _backFromSection,
                   tooltip: _isShortcutRoot
@@ -1370,7 +1370,6 @@ class SettingsScreenState extends State<SettingsScreen> {
         controller: controller,
         enabled: controller.longTermMemoryEnabled,
         summary: controller.memorySummary,
-        recentMemories: controller.recentMemories,
         language: controller.interfaceLanguage,
       ),
     );
@@ -2322,13 +2321,15 @@ class SettingsScreenState extends State<SettingsScreen> {
                         icon: const Icon(Icons.audio_file_outlined),
                         label: const Text('选择音频'),
                         onPressed: () async {
-                          final result = await FilePicker.pickFiles(
-                            type: FileType.custom,
-                            allowedExtensions: ['wav', 'mp3', 'm4a'],
-                          );
-                          if (result.isNotEmpty) {
+                          try {
+                            final result = await FilePicker.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: ['wav', 'mp3', 'm4a'],
+                            );
+                            if (!context.mounted || result.isEmpty) return;
                             final selected = result.first;
                             final bytes = await selected.readAsBytes();
+                            if (!context.mounted) return;
                             if (bytes.length < 10 * 1024 * 1024) {
                               setDialogState(() {
                                 referenceAudio = selected;
@@ -2339,6 +2340,10 @@ class SettingsScreenState extends State<SettingsScreen> {
                               });
                             } else {
                               setDialogState(() => error = '参考音频必须小于 10MB');
+                            }
+                          } on Object catch (value) {
+                            if (context.mounted) {
+                              setDialogState(() => error = value.toString());
                             }
                           }
                         },
@@ -2365,6 +2370,7 @@ class SettingsScreenState extends State<SettingsScreen> {
                                   ? key.text.trim()
                                   : await const SecretStore()
                                         .readDashScopeKey();
+                              if (!context.mounted) return;
                               final bytes = referenceAudioBytes;
                               final name = preferredName.text.trim();
                               if (cloneTargetModel.text.trim().isEmpty) {
@@ -2411,11 +2417,16 @@ class SettingsScreenState extends State<SettingsScreen> {
                                       audioText: audioText.text,
                                       baseUrl: baseUrl.text,
                                     );
+                                if (!context.mounted) return;
                                 voice.text = created;
                                 model.text = cloneTargetModel.text.trim();
                                 setDialogState(() => createdVoiceId = created);
                               } on Object catch (value) {
-                                setDialogState(() => error = value.toString());
+                                if (context.mounted) {
+                                  setDialogState(
+                                    () => error = value.toString(),
+                                  );
+                                }
                               } finally {
                                 if (context.mounted) {
                                   setDialogState(() => creatingVoice = false);
@@ -2732,13 +2743,26 @@ class SettingsScreenState extends State<SettingsScreen> {
                       Expanded(
                         child: DropdownButtonFormField<String>(
                           initialValue: format,
+                          isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: '格式',
                             border: OutlineInputBorder(),
                           ),
                           items: const [
-                            DropdownMenuItem(value: 'wav', child: Text('WAV')),
-                            DropdownMenuItem(value: 'mp3', child: Text('MP3')),
+                            DropdownMenuItem(
+                              value: 'wav',
+                              child: Text(
+                                'WAV',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: 'mp3',
+                              child: Text(
+                                'MP3',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           ],
                           onChanged: (value) {
                             if (value != null) {
@@ -2901,7 +2925,16 @@ class SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _convertLegacyData(BuildContext context) async {
     final language = controller.interfaceLanguage;
-    var progressOpen = false;
+    DialogRoute<void>? progressRoute;
+    void closeProgress() {
+      final route = progressRoute;
+      progressRoute = null;
+      final navigator = route?.navigator;
+      if (route != null && route.isActive && navigator != null) {
+        navigator.removeRoute(route);
+      }
+    }
+
     final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['json'],
@@ -2929,8 +2962,7 @@ class SettingsScreenState extends State<SettingsScreen> {
         throw const FormatException('当前 LLM API Key 为空，请先完成 AI 接口设置');
       }
       if (!context.mounted) return;
-      _showDataConverterProgress(context, file.name);
-      progressOpen = true;
+      progressRoute = _showDataConverterProgress(context, file.name);
       final raw = await OpenAiCompatibleClient().complete(
         baseUrl: controller.activeLlmBaseUrl,
         apiKey: apiKey,
@@ -2944,9 +2976,8 @@ class SettingsScreenState extends State<SettingsScreen> {
           {'role': 'user', 'content': legacyMigrationPrompt(legacyJson)},
         ],
       );
+      closeProgress();
       if (!context.mounted) return;
-      Navigator.of(context).pop();
-      progressOpen = false;
       final converted = parseLegacyMigrationResponse(raw);
       final merged = mergeLegacyMigration(controller.exportData(), converted);
       final shouldSave = await _openDetailPage<bool>(
@@ -2982,34 +3013,40 @@ class SettingsScreenState extends State<SettingsScreen> {
     } on Object catch (error, stackTrace) {
       RuntimeLog.instance.error('Legacy data conversion', error, stackTrace);
       if (!context.mounted) return;
-      // Close the progress dialog if the request failed before it returned.
-      if (progressOpen && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
+      closeProgress();
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('旧数据转换失败：$error')));
+    } finally {
+      closeProgress();
     }
   }
 
-  void _showDataConverterProgress(BuildContext context, String fileName) {
-    showDialog<void>(
-      useRootNavigator: false,
+  DialogRoute<void> _showDataConverterProgress(
+    BuildContext context,
+    String fileName,
+  ) {
+    final route = DialogRoute<void>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        content: Row(
-          children: [
-            const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2.5),
-            ),
-            const SizedBox(width: 16),
-            Expanded(child: Text('正在转换 $fileName\n请保持当前页面打开')),
-          ],
+      builder: (context) => PopScope<void>(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(width: 16),
+              Expanded(child: Text('正在转换 $fileName\n请保持当前页面打开')),
+            ],
+          ),
         ),
       ),
     );
+    Navigator.of(context).push<void>(route);
+    return route;
   }
 
   Future<void> _exportData(BuildContext context) async {
@@ -3414,14 +3451,12 @@ class _LongTermMemoryDialog extends StatefulWidget {
     required this.controller,
     required this.enabled,
     required this.summary,
-    required this.recentMemories,
     required this.language,
   });
 
   final AppController controller;
   final bool enabled;
   final String summary;
-  final List<String> recentMemories;
   final AppLanguage language;
 
   @override
@@ -3503,6 +3538,20 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
       );
       return;
     }
+    final draftAtStart = _summary.text;
+    final enabledAtStart = _enabled;
+    void checkDraft() {
+      if (_summary.text != draftAtStart || _enabled != enabledAtStart) {
+        throw StateError(
+          language.text(
+            '记忆草稿已修改，已保留你的编辑。请先保存后重新整理。',
+            'Your memory draft changed and has been preserved. Save it before organizing again.',
+            '記憶の下書きが変更されました。編集は保持されています。保存してから再整理してください。',
+          ),
+        );
+      }
+    }
+
     setState(() => _manualBusy = true);
     try {
       if (!controller.aiEnabled) {
@@ -3515,6 +3564,8 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
       if (apiKey.trim().isEmpty) {
         throw StateError('当前 LLM API Key 为空，请先完成 AI 接口设置');
       }
+      if (!mounted) return;
+      checkDraft();
       final provider = controller.llmProvider;
       final baseUrl = controller.activeLlmBaseUrl;
       final model = controller.activeLlmModel;
@@ -3531,6 +3582,7 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
         ),
       );
       if (!mounted) return;
+      checkDraft();
       if (proposal == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -3555,6 +3607,7 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
             _ManualMemoryReviewDialog(proposal: proposal, language: language),
       );
       if (!mounted || confirmed != true) return;
+      checkDraft();
       if (!proposal.commit(controller)) {
         throw StateError('记忆已变化或确认内容无效，请重新整理');
       }
@@ -3816,46 +3869,8 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
                   }),
                 ),
               ),
-            ] else ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  language.text(
-                    '最近记忆 ${widget.recentMemories.length} 条 · 待整理 ${widget.controller.pendingRecentMemoryCount} / 8',
-                    '${widget.recentMemories.length} recent · ${widget.controller.pendingRecentMemoryCount} / 8 pending',
-                    '最近の記憶 ${widget.recentMemories.length} 件 · 未整理 ${widget.controller.pendingRecentMemoryCount} / 8',
-                  ),
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (widget.recentMemories.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    language.text(
-                      '尚未生成最近记忆',
-                      'No recent memories yet',
-                      '最近の記憶はまだありません',
-                    ),
-                  ),
-                )
-              else
-                for (
-                  var index = 0;
-                  index < widget.recentMemories.length;
-                  index++
-                )
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: SettingsOptionCard(
-                      child: ListTile(
-                        leading: Text('${index + 1}'),
-                        title: Text(widget.recentMemories[index]),
-                      ),
-                    ),
-                  ),
-            ],
+            ] else
+              _recentMemoryList(language),
           ],
         ),
       ),
@@ -3874,6 +3889,50 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
       ],
     );
   }
+
+  Widget _recentMemoryList(AppLanguage language) => AnimatedBuilder(
+    animation: widget.controller,
+    builder: (context, _) {
+      final memories = widget.controller.recentMemories;
+      final pending = widget.controller.pendingRecentMemoryCount;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            language.text(
+              '最近记忆 ${memories.length} 条 · 待整理 $pending / 8',
+              '${memories.length} recent · $pending / 8 pending',
+              '最近の記憶 ${memories.length} 件 · 未整理 $pending / 8',
+            ),
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          if (memories.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                language.text(
+                  '尚未生成最近记忆',
+                  'No recent memories yet',
+                  '最近の記憶はまだありません',
+                ),
+              ),
+            )
+          else
+            for (var index = 0; index < memories.length; index++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SettingsOptionCard(
+                  child: ListTile(
+                    leading: Text('${index + 1}'),
+                    title: Text(memories[index]),
+                  ),
+                ),
+              ),
+        ],
+      );
+    },
+  );
 }
 
 class _ManualMemoryReviewDialog extends StatefulWidget {

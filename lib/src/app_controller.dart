@@ -2088,6 +2088,7 @@ class AppController extends ChangeNotifier {
     String currentInput = '',
     CharacterPerformancePromptContext? performanceContext,
     bool independentPerformance = false,
+    Iterable<String> contactRequestIds = const [],
   }) {
     final prompt = _buildCharacterPrompt(
       currentInput: currentInput,
@@ -2095,9 +2096,16 @@ class AppController extends ChangeNotifier {
       independentPerformance: independentPerformance,
     );
     final npcMemory = _npcMessageMemoryForMainChat(currentInput);
+    final requestedContacts = npcChatContacts
+        .where((contact) => contactRequestIds.contains(contact.id))
+        .map(
+          (contact) =>
+              '${contact.id}=${contact.names.chinese}/${contact.names.japanese}',
+        )
+        .join('、');
     return [
       prompt,
-      '【虚拟手机联络】如果用户在当前发言中向在场 NPC 请求交换联系方式、添加好友，或使用微信、QQ、短信、SMS、LINE、Discord、Telegram、邮箱等通讯方式，请让对应 NPC 按身份和关系自然回应。使用“角色[精确 npc_id]：”输出该 NPC 自己的台词，明确表示同意、犹豫或拒绝。不要由旁白或其他角色代替本人同意，不声称已经加入联系人；用户会在回复后单独确认。',
+      '【虚拟手机联络】如果用户在当前发言中向在场 NPC 请求交换联系方式、添加好友，或使用微信、QQ、短信、SMS、LINE、Discord、Telegram、邮箱等通讯方式，请让对应 NPC 按身份和关系自然回应。使用“角色[精确 npc_id]：”输出该 NPC 自己的台词，明确表示同意、犹豫或拒绝。不要由旁白或其他角色代替本人同意，不声称已经加入联系人；用户会在回复后单独确认。${requestedContacts.isEmpty ? '' : '\n本轮应用根据点名或最近在场发言锁定联系请求目标：$requestedContacts。即使用户没有重复 NPC 名称，也应让该 NPC 自己回应并保留精确角色前缀；可同意、犹豫或拒绝，不要替其决定。'}',
       if (npcMemory.isNotEmpty) npcMemory,
     ].join('\n\n');
   }
@@ -2173,15 +2181,19 @@ ${_promptDataBlock('npc_message_memory', jsonEncode(records))}''';
         lastUser = message.text;
         continue;
       }
-      final speech = parseAssistantSegments(message.text)
-          .where(
-            (segment) =>
-                segment.speaker == ChatSpeaker.character &&
-                segment.characterId == npcId,
-          )
-          .map(displayTextForAssistantSegment)
-          .where((text) => text.trim().isNotEmpty)
-          .join('\n');
+      final speech =
+          parseAssistantSegments(
+                message.text,
+                defaultPrimaryCharacterId: activeCharacterId,
+              )
+              .where(
+                (segment) =>
+                    segment.speaker == ChatSpeaker.character &&
+                    segment.characterId == npcId,
+              )
+              .map(displayTextForAssistantSegment)
+              .where((text) => text.trim().isNotEmpty)
+              .join('\n');
       if (speech.isNotEmpty) {
         inPerson.add(jsonEncode({'user': lastUser, 'npc': speech}));
       }

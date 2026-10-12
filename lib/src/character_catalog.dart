@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'app_localization.dart';
+import 'character_identity.dart';
 
 class CharacterNames {
   const CharacterNames({
@@ -99,6 +100,29 @@ class CharacterCatalog {
   final Map<String, CharacterProfile> _profiles;
   final List<_NpcPlacement> _placements;
 
+  /// Shared immutable name metadata; resolving a stream label must not rebuild
+  /// character prompts or depend on the app's display language.
+  late final CharacterIdentityResolver identityResolver =
+      CharacterIdentityResolver(
+        _profiles.values.map(
+          (profile) => CharacterIdentityRecord(
+            id: profile.id,
+            aliases: [
+              profile.names.chinese,
+              profile.names.english,
+              profile.names.japanese,
+              profile.names.chinese.split('·').first,
+              profile.names.english.split(' ').first,
+              profile.names.japanese.split('・').first,
+              ...profile.aliases,
+            ],
+          ),
+        ),
+        // Sophie belongs to another character world. In particular her name
+        // must not be interpreted as the single-character Ryza NPC name 菲.
+        blockedNames: const ['苏菲', '蘇菲', 'ソフィー', 'Sophie'],
+      );
+
   /// A detached, read-only view for contact lists and other character tools.
   List<CharacterProfile> get allProfiles =>
       List<CharacterProfile>.unmodifiable(_profiles.values);
@@ -168,17 +192,23 @@ class CharacterCatalog {
     return catalog;
   }
 
-  CharacterProfile? profile(String id) => _profiles[id];
+  String? resolveCharacterId(String nameOrId) =>
+      identityResolver.resolve(nameOrId);
+
+  CharacterProfile? profile(String id) => _profiles[resolveCharacterId(id)];
   String lookupPrompt(String query) {
-    final q = query.trim().toLowerCase();
-    if (q.length < 2) return '请提供具体角色名或 ID。';
+    final q = normalizeCharacterIdentityName(query);
+    final exact = identityResolver.exactIds(q);
+    if (exact.length > 1) {
+      return jsonEncode({
+        'characters': const [],
+        'note': '角色名不唯一，请提供完整角色名或 ID。查询不代表人物已在场。',
+      });
+    }
+    if (exact.isEmpty && q.length < 2) return '请提供具体角色名或 ID。';
+    final ids = exact.isNotEmpty ? exact : identityResolver.partialIds(q);
     final matches = _profiles.values.where(
-      (p) => [
-        p.id,
-        p.names.chinese,
-        p.names.english,
-        p.names.japanese,
-      ].any((n) => n.toLowerCase().contains(q)),
+      (profile) => ids.contains(profile.id),
     );
     return jsonEncode({
       'characters': matches
@@ -196,7 +226,7 @@ class CharacterCatalog {
   }
 
   String displayName(String id, AppLanguage language) =>
-      _profiles[id]?.names.forLanguage(language) ?? id;
+      profile(id)?.names.forLanguage(language) ?? id;
 
   String displayNameForPlacementId(String placementId, AppLanguage language) {
     final rawId = placementId.replaceFirst('npc_', '');

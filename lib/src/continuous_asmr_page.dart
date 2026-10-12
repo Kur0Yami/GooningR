@@ -1050,7 +1050,12 @@ class _ContinuousAsmrPageState extends State<ContinuousAsmrPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: c,
+    builder: (context, _) => _buildPage(context),
+  );
+
+  Widget _buildPage(BuildContext context) {
     if (_playing || _replaying) return _buildPlaybackScreen(context);
     final colors = Theme.of(context).colorScheme;
     final busy = _running;

@@ -1,4 +1,5 @@
 import 'character_catalog.dart';
+import 'character_identity.dart';
 import 'character_runtime_profile.dart';
 
 class NpcChatContact {
@@ -8,6 +9,7 @@ class NpcChatContact {
     required this.persona,
     this.avatarAsset,
     List<String> aliases = const [],
+    this.identityResolver,
   }) : aliases = List<String>.unmodifiable(
          {
            id,
@@ -26,44 +28,105 @@ class NpcChatContact {
   final String? avatarAsset;
   final String persona;
   final List<String> aliases;
+  final CharacterIdentityResolver? identityResolver;
+  late final CharacterIdentityResolver _standaloneIdentityResolver =
+      CharacterIdentityResolver([
+        CharacterIdentityRecord(id: id, aliases: aliases),
+      ]);
 
   /// Latin names use word boundaries so e.g. "Lent" does not match "talented".
   /// The two Plachta contacts can both match an unqualified shared name; callers
   /// should retain both identities rather than silently merging their histories.
-  bool matchesMention(String input) {
-    if (id == 'sophie_plachta_doll' || id == 'sophie_plachta_young') {
-      const name = r'(?:普拉芙[妲达]|plachta|プラフタ)';
-      final doll = RegExp(
-        '(?:人偶|人形|doll)\\s*$name|$name\\s*[（(](?:人偶|人形|doll)[）)]',
-        caseSensitive: false,
-      ).hasMatch(input);
-      final young = RegExp(
-        '(?:年轻|少女|young|girl)\\s*$name|$name\\s*[（(](?:年轻|少女|young|girl)[）)]',
-        caseSensitive: false,
-      ).hasMatch(input);
-      if (doll != young) {
-        return doll
-            ? id == 'sophie_plachta_doll'
-            : id == 'sophie_plachta_young';
-      }
-    }
-    for (final alias in aliases) {
-      if (RegExp(
-        r"^[a-z0-9 _.:'()-]+$",
-        caseSensitive: false,
-      ).hasMatch(alias)) {
-        if (RegExp(
-          '(^|[^a-z0-9_])${RegExp.escape(alias)}(\$|[^a-z0-9_])',
-          caseSensitive: false,
-        ).hasMatch(input)) {
-          return true;
-        }
-      } else if (input.toLowerCase().contains(alias.toLowerCase())) {
-        return true;
-      }
-    }
-    return false;
+  bool matchesMention(String input) =>
+      (identityResolver ?? _standaloneIdentityResolver)
+          .mentionedIds(input)
+          .contains(id);
+}
+
+/// Canonicalizes a speaker or saved ID within one primary character's world.
+/// Unknown and ambiguous names stay unresolved rather than borrowing another
+/// character's contact or choosing the first of the two Plachta identities.
+String? resolveNpcContactId(
+  String value, {
+  String primaryCharacterId = CharacterRuntimeIds.ryza,
+  CharacterCatalog? catalog,
+  Iterable<NpcChatContact>? contacts,
+}) {
+  if (!_knownPrimaryCharacter(primaryCharacterId)) return null;
+  final available = contacts
+      ?.where((contact) => _inContactWorld(contact.id, primaryCharacterId))
+      .toList(growable: false);
+  final resolver = _contactResolver(primaryCharacterId, catalog, available);
+  final id = resolver.resolve(value);
+  if (id == null || !_inContactWorld(id, primaryCharacterId)) return null;
+  if (available != null && !available.any((contact) => contact.id == id)) {
+    return null;
   }
+  return id;
+}
+
+/// All longest name occurrences, including ambiguous candidates. This API and
+/// matchesMention share the same metadata and do not instantiate NPC personas.
+List<String> mentionedNpcContactIds(
+  String input, {
+  String primaryCharacterId = CharacterRuntimeIds.ryza,
+  CharacterCatalog? catalog,
+  Iterable<NpcChatContact>? contacts,
+}) {
+  if (!_knownPrimaryCharacter(primaryCharacterId)) return const [];
+  final available = contacts
+      ?.where((contact) => _inContactWorld(contact.id, primaryCharacterId))
+      .toList(growable: false);
+  final ids = _contactResolver(
+    primaryCharacterId,
+    catalog,
+    available,
+  ).mentionedIds(input);
+  final allowed = available?.map((contact) => contact.id).toSet();
+  return List<String>.unmodifiable(
+    ids.where(
+      (id) =>
+          _inContactWorld(id, primaryCharacterId) &&
+          (allowed == null || allowed.contains(id)),
+    ),
+  );
+}
+
+bool _knownPrimaryCharacter(String id) =>
+    id == CharacterRuntimeIds.ryza || id == CharacterRuntimeIds.sophie;
+
+bool _inContactWorld(String id, String primaryCharacterId) =>
+    primaryCharacterId == CharacterRuntimeIds.sophie
+    ? id.startsWith('sophie_')
+    : id != CharacterRuntimeIds.ryza &&
+          id != CharacterRuntimeIds.sophie &&
+          !id.startsWith('sophie_');
+
+CharacterIdentityResolver _contactResolver(
+  String primaryCharacterId,
+  CharacterCatalog? catalog,
+  List<NpcChatContact>? contacts,
+) {
+  if (contacts != null) {
+    final shared = contacts.firstOrNull?.identityResolver;
+    if (shared != null &&
+        contacts.every(
+          (contact) => identical(contact.identityResolver, shared),
+        )) {
+      return shared;
+    }
+    return CharacterIdentityResolver(
+      contacts.map(
+        (contact) =>
+            CharacterIdentityRecord(id: contact.id, aliases: contact.aliases),
+      ),
+      blockedNames: const ['苏菲', '蘇菲', 'ソフィー', 'Sophie'],
+    );
+  }
+  return primaryCharacterId == CharacterRuntimeIds.sophie
+      ? _sophieContactIdentityResolver
+      : (catalog ?? CharacterCatalog.current ?? CharacterCatalog.empty())
+            .identityResolver;
 }
 
 List<NpcChatContact> npcChatContactsFor(
@@ -78,7 +141,8 @@ List<NpcChatContact> npcChatContactsFor(
         (definition) => NpcChatContact(
           id: definition.id,
           names: definition.names,
-          aliases: definition.aliases,
+          aliases: _sophieIdentityAliases(definition).toList(growable: false),
+          identityResolver: _sophieContactIdentityResolver,
           persona:
               '''你仅扮演《苏菲的炼金工房2》中的${definition.names.chinese}。这是独立于苏菲主聊天的 NPC 消息交流；以本存档已建立的经历和当前消息为准。
 
@@ -106,6 +170,7 @@ $world
             names: profile.names,
             avatarAsset: profile.avatarAsset,
             aliases: profile.aliases,
+            identityResolver: catalog.identityResolver,
             persona: profile.id == 'claudia'
                 ? '''${profile.systemPrompt}
 
@@ -128,6 +193,40 @@ class _SophieContactDefinition {
   final CharacterNames names;
   final String persona;
   final List<String> aliases;
+}
+
+final _sophieContactIdentityResolver = CharacterIdentityResolver(
+  _sophieDefinitions.map(
+    (definition) => CharacterIdentityRecord(
+      id: definition.id,
+      aliases: [
+        definition.names.chinese,
+        definition.names.english,
+        definition.names.japanese,
+        ..._sophieIdentityAliases(definition),
+      ],
+    ),
+  ),
+);
+
+Iterable<String> _sophieIdentityAliases(
+  _SophieContactDefinition definition,
+) sync* {
+  yield* definition.aliases;
+  final qualifiers = switch (definition.id) {
+    'sophie_plachta_doll' => const ['人偶', '人形', 'doll'],
+    'sophie_plachta_young' => const ['年轻', '少女', 'young', 'girl'],
+    _ => const <String>[],
+  };
+  // Keep the previously supported mixed-language qualifiers explicit metadata.
+  // Bare Plachta remains shared; only a qualifier selects a single identity.
+  for (final qualifier in qualifiers) {
+    for (final name in const ['普拉芙妲', '普拉芙达', 'Plachta', 'プラフタ']) {
+      yield '$qualifier$name';
+      yield '$qualifier $name';
+      yield '$name($qualifier)';
+    }
+  }
 }
 
 // These conservative facts reuse the Sophie 2 preset and its official sources

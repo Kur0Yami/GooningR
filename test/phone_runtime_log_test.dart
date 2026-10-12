@@ -134,6 +134,10 @@ void main() {
         }
         // An overlay blocks the log list's semantics while background logs
         // continue to prepend rows. Returning must rebuild the current subtree.
+        await tester.tap(
+          find.byKey(const ValueKey('runtime-log-filter-toggle')),
+        );
+        await tester.pumpAndSettle();
         await tester.tap(find.byType(DropdownButton<RuntimeLogLevel>));
         await tester.pumpAndSettle();
         await tester.runAsync(() async {

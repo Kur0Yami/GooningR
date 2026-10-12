@@ -291,6 +291,14 @@ class _ConversationHistoryPageState extends State<ConversationHistoryPage> {
                     : const Color(0xB8F1F3F4),
                 tone: dark ? GlassTone.dark : GlassTone.light,
                 child: ExpansionTile(
+                  // Search must reveal matching text even when this save was
+                  // collapsed. Bind expansion to its save and search rather
+                  // than the previous row occupying this list position.
+                  key: PageStorageKey((
+                    widget.controller.activeCharacterId,
+                    group.slotIndex,
+                    normalizedQuery,
+                  )),
                   initiallyExpanded: normalizedQuery.isNotEmpty,
                   iconColor: colors.onSurfaceVariant,
                   collapsedIconColor: colors.onSurfaceVariant,

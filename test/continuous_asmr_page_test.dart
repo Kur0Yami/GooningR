@@ -5,10 +5,55 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ryza_chat_mvp/src/app_controller.dart';
+import 'package:ryza_chat_mvp/src/app_localization.dart';
 import 'package:ryza_chat_mvp/src/continuous_asmr_page.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('ASMR options fit narrow screens and update interface language', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({});
+    for (final name in [
+      'xyz.luan/audioplayers',
+      'xyz.luan/audioplayers.global',
+    ]) {
+      final channel = MethodChannel(name);
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (_) async => 1,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+    }
+    final controller = (await tester.runAsync(() => AppController.load()))!;
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ContinuousAsmrPage(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    controller.configureLanguages(
+      interface: AppLanguage.english,
+      narrator: controller.narratorLanguage,
+      characterReply: controller.characterReplyLanguage,
+      translation: controller.translationLanguage,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Enter ASMR topic'), findsOneWidget);
+    expect(find.text('输入 ASMR 主题'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
 
   test(
     'ASMR prompt follows the active character and its role settings',

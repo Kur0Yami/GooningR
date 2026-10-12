@@ -274,6 +274,7 @@ class VirtualPhoneLauncher extends StatelessWidget {
     this.statusInfoBuilder,
     this.wallpapers,
     this.liquidGlassBuilder,
+    this.languageBuilder,
   });
 
   final AppLanguage language;
@@ -301,6 +302,7 @@ class VirtualPhoneLauncher extends StatelessWidget {
   final VirtualPhoneStatusInfo Function()? statusInfoBuilder;
   final VirtualPhoneWallpaperStore? wallpapers;
   final bool Function()? liquidGlassBuilder;
+  final AppLanguage Function()? languageBuilder;
 
   VoidCallback? _callbackFor(VirtualPhoneApp app) => switch (app) {
     VirtualPhoneApp.status => onStatusPressed,
@@ -347,14 +349,12 @@ class VirtualPhoneLauncher extends StatelessWidget {
             statusInfoBuilder: statusInfoBuilder,
             wallpapers: wallpapers,
             liquidGlassBuilder: liquidGlassBuilder,
+            languageBuilder: languageBuilder,
           ),
         ),
       ),
       transitionBuilder: (context, animation, secondaryAnimation, child) {
-        final curve = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
+        final curve = animation.drive(CurveTween(curve: Curves.easeOutCubic));
         return FadeTransition(
           opacity: curve,
           child: ScaleTransition(
@@ -396,6 +396,7 @@ class _VirtualPhoneCard extends StatefulWidget {
     required this.statusInfoBuilder,
     required this.wallpapers,
     required this.liquidGlassBuilder,
+    required this.languageBuilder,
   });
 
   final AppLanguage language;
@@ -414,6 +415,7 @@ class _VirtualPhoneCard extends StatefulWidget {
   final VirtualPhoneStatusInfo Function()? statusInfoBuilder;
   final VirtualPhoneWallpaperStore? wallpapers;
   final bool Function()? liquidGlassBuilder;
+  final AppLanguage Function()? languageBuilder;
 
   @override
   State<_VirtualPhoneCard> createState() => _VirtualPhoneCardState();
@@ -439,6 +441,8 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
 
   bool get _liquidGlass =>
       widget.liquidGlassBuilder?.call() ?? widget.liquidGlass;
+  AppLanguage get _language =>
+      widget.languageBuilder?.call() ?? widget.language;
 
   @override
   void initState() {
@@ -858,23 +862,23 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
         ? null
         : (info.llmLatency!.inMilliseconds / 1000).toStringAsFixed(1);
     final signalLabel = seconds == null
-        ? widget.language.text(
+        ? _language.text(
             'LLM 信号：尚未采样，每 10 轮对话采集一次',
             'LLM signal: not sampled yet; sampled every 10 turns',
             'LLM電波：未測定、10ターンごとに測定',
           )
-        : widget.language.text(
+        : _language.text(
             'LLM 信号：$bars/4 格，首次回复延迟 $seconds 秒',
             'LLM signal: $bars/4 bars, first response in $seconds s',
             'LLM電波：$bars/4、最初の応答まで$seconds秒',
           );
     final batteryLabel = info.satietyEnabled
-        ? widget.language.text(
+        ? _language.text(
             '饱食度：${info.batteryPercent}%',
             'Satiety: ${info.batteryPercent}%',
             '満腹度：${info.batteryPercent}%',
           )
-        : widget.language.text(
+        : _language.text(
             '饱食度未启用，显示满电',
             'Satiety disabled; showing full battery',
             '満腹度は無効、満充電を表示',
@@ -1008,10 +1012,7 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
                     children: [
                       _PhoneHomeClock(info: _homeInfo),
                       const SizedBox(height: 12),
-                      _PhoneHomeInfoRow(
-                        language: widget.language,
-                        info: _homeInfo,
-                      ),
+                      _PhoneHomeInfoRow(language: _language, info: _homeInfo),
                       const SizedBox(height: 16),
                       GridView.builder(
                         shrinkWrap: true,
@@ -1037,7 +1038,7 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
                             icon: app.icon,
                             size: iconSize,
                             liquidGlass: _liquidGlass,
-                            label: app.label(widget.language),
+                            label: app.label(_language),
                             enabled: hasPage,
                             onPressed: hasPage ? () => _openApp(app) : null,
                           );
@@ -1075,8 +1076,8 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
                                 : app.icon,
                             label: app == VirtualPhoneApp.shortcut
                                 ? widget.shortcutLabel?.call() ??
-                                      app.label(widget.language)
-                                : app.label(widget.language),
+                                      app.label(_language)
+                                : app.label(_language),
                             enabled: true,
                             showLabel: false,
                             onPressed: () => _openApp(app),
@@ -1113,13 +1114,13 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
         if (builder != null)
           builder(context)
         else
-          _VirtualPhoneFallbackPage(language: widget.language, app: app),
+          _VirtualPhoneFallbackPage(language: _language, app: app),
         if (builder == null || !widget.pageManagedBackApps.contains(app))
           Positioned(
             left: 6,
             top: 4,
             child: VirtualPhoneBackButton(
-              tooltip: widget.language.text('返回', 'Back', '戻る'),
+              tooltip: _language.text('返回', 'Back', '戻る'),
               onPressed: () => _navigatorKey.currentState?.maybePop(),
             ),
           ),

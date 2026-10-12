@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ryza_chat_mvp/src/glass_ui.dart';
@@ -94,6 +96,66 @@ class _AcceptedTaskTransport extends TestTransport {
   }
 }
 
+class _DelayedTaskTransport extends TestTransport {
+  static const secondPcId = '00000000-0000-4000-8000-000000000099';
+  final submitted = Completer<void>();
+  final completion = Completer<void>();
+  Object? submissionError;
+  bool acceptTask = false;
+  int actionAttempts = 0;
+
+  @override
+  Future<Json> request(
+    Uri origin,
+    String method,
+    String path, {
+    String? token,
+    Json? body,
+  }) async {
+    if (path == '/v1/actions' && method == 'POST') {
+      actionAttempts++;
+      if (!submitted.isCompleted) submitted.complete();
+      await completion.future;
+      if (submissionError != null) throw submissionError!;
+    }
+    final result = await super.request(
+      origin,
+      method,
+      path,
+      token: token,
+      body: body,
+    );
+    if (origin.host == 'second-relay.example.test') {
+      if (path.endsWith('/status')) return {...result, 'pc_id': secondPcId};
+      if (path == '/v1/state') {
+        return {
+          ...result,
+          'devices': [
+            {
+              ...objects(result['devices']).single,
+              'pc_id': secondPcId,
+              'device_id': secondPcId,
+              'device_name': '另一台PC',
+            },
+          ],
+          for (final key in ['sessions', 'workspaces'])
+            key: [
+              for (final row in objects(result[key]))
+                {...row, 'pc_id': secondPcId},
+            ],
+        };
+      }
+    }
+    return path == '/v1/actions' && method == 'POST' && acceptTask
+        ? {
+            ...result,
+            'status': 'accepted',
+            'session_id': 'session-old-submission',
+          }
+        : result;
+  }
+}
+
 Future<(RelayService, _FixtureConversations)> _create(
   TestTransport transport,
 ) async {
@@ -113,17 +175,22 @@ Future<void> _mount(
   RelayService service,
   RelayConversations conversations, {
   ValueNotifier<bool>? glass,
+  double textScale = 1,
+  ValueNotifier<double>? keyboard,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
-      builder: glass == null
-          ? null
-          : (context, child) => ValueListenableBuilder<bool>(
-              valueListenable: glass,
-              child: child,
-              builder: (context, enabled, child) =>
-                  GlassStyleScope(enabled: enabled, child: child!),
-            ),
+      builder: (context, child) => AnimatedBuilder(
+        animation: Listenable.merge([?glass, ?keyboard]),
+        child: child,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(textScale),
+            viewInsets: EdgeInsets.only(bottom: keyboard?.value ?? 0),
+          ),
+          child: GlassStyleScope(enabled: glass?.value ?? false, child: child!),
+        ),
+      ),
       home: RelayChatPage(
         service: service,
         conversations: conversations,
@@ -153,6 +220,114 @@ Future<void> _dispose(
 }
 
 void main() {
+  for (final switchProfile in [false, true]) {
+    for (final failSubmission in [false, true]) {
+      testWidgets(
+        'a delayed task result stays with its original view (PC=$switchProfile, failure=$failSubmission)',
+        (tester) async {
+          final transport = _DelayedTaskTransport()
+            ..acceptTask = !failSubmission;
+          final (service, conversations) = await _create(transport);
+          final originalProfileId =
+              service.profiles.single['device_id'] as String;
+          if (switchProfile) {
+            final secondProfileId = await service.pair(
+              PairingQr.parse(
+                qrText(origin: 'https://second-relay.example.test'),
+              ),
+              '另一台测试手机',
+              trustedByUser: true,
+            );
+            await service.sync(secondProfileId, snapshot: true);
+          }
+          await _mount(tester, service, conversations);
+          await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('授权工作区').last);
+          await tester.pumpAndSettle();
+          final prompt = find.byKey(const ValueKey('relay-chat-prompt'));
+          await tester.enterText(prompt, '创建旧会话任务');
+          await tester.pump();
+          await tester.tap(find.byKey(const ValueKey('relay-chat-send')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('确认发送'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 350));
+          expect(transport.submitted.isCompleted, isTrue);
+          if (switchProfile) {
+            await tester.tap(find.byTooltip('选择目标 PC'));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 350));
+            await tester.tap(find.text('另一台PC').last);
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 350));
+          } else {
+            await tester.tap(find.byKey(const ValueKey('relay-chat-history')));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 350));
+            await tester.tap(
+              find.byKey(const ValueKey('relay-session-session-1')),
+            );
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 350));
+            expect(conversations.refreshed.last.$2, 'session-1');
+          }
+          expect(tester.widget<TextField>(prompt).enabled, isFalse);
+          expect(
+            tester
+                .widget<IconButton>(
+                  find.byKey(const ValueKey('relay-chat-send')),
+                )
+                .onPressed,
+            isNull,
+          );
+          if (failSubmission) {
+            // An uncategorized transport failure reaches the page's error handler.
+            transport.submissionError = StateError(
+              'simulated transport failure',
+            );
+          }
+          transport.completion.complete();
+          await tester.pumpAndSettle();
+          expect(
+            switchProfile ? find.textContaining('另一台PC ·') : find.text('测试会话'),
+            findsOneWidget,
+          );
+          expect(find.text('操作失败，请检查网络或配置后重试'), findsNothing);
+          expect(tester.widget<TextField>(prompt).enabled, isTrue);
+          final oldTask = service
+              .collection(service.profile(originalProfileId)!, 'outbox')
+              .single;
+          expect(
+            object(object(oldTask['body'])['payload'])['prompt'],
+            '创建旧会话任务',
+          );
+          expect(
+            oldTask['local_status'],
+            failSubmission ? 'sending' : 'accepted',
+          );
+          await tester.tap(find.byKey(const ValueKey('relay-chat-new')));
+          await tester.pumpAndSettle();
+          await tester.enterText(prompt, '新会话草稿');
+          await tester.pump(const Duration(seconds: 1));
+          await tester.pumpAndSettle();
+          expect(find.text('session-old-submission'), findsNothing);
+          expect(tester.widget<TextField>(prompt).controller!.text, '新会话草稿');
+          if (switchProfile) {
+            await tester.tap(find.byTooltip('选择目标 PC'));
+            await tester.pumpAndSettle();
+            await tester.tap(find.text('测试PC').last);
+            await tester.pumpAndSettle();
+          }
+          expect(find.text('创建旧会话任务'), findsOneWidget);
+          expect(find.text(failSubmission ? '发送中' : 'PC 已接受'), findsOneWidget);
+          expect(transport.actionAttempts, 1);
+          expect(tester.takeException(), isNull);
+          await _dispose(tester, service, conversations);
+        },
+      );
+    }
+  }
   testWidgets(
     'phone-managed PC back remains behind drawer during animation and returns one level',
     (tester) async {
@@ -687,6 +862,53 @@ void main() {
       await _dispose(tester, service, conversations);
     },
   );
+
+  testWidgets('large text and keyboard keep a multiline task composer usable', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final keyboard = ValueNotifier(0.0);
+    addTearDown(keyboard.dispose);
+    final (service, conversations) = await _create(TestTransport());
+    await _mount(
+      tester,
+      service,
+      conversations,
+      textScale: 2,
+      keyboard: keyboard,
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('授权工作区').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('relay-chat-prompt')),
+      '第一行任务\n第二行任务\n第三行任务\n第四行任务\n第五行任务',
+    );
+    keyboard.value = 260;
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    final send = find.byKey(const ValueKey('relay-chat-send'));
+    await tester.ensureVisible(send);
+    await tester.pumpAndSettle();
+    expect(tester.getRect(send).bottom, lessThanOrEqualTo(308));
+    expect(tester.widget<IconButton>(send).onPressed, isNotNull);
+    await tester.tap(send);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认发送'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    final pending = find.textContaining('新对话任务尚未确认结果');
+    await tester.ensureVisible(pending);
+    await tester.pumpAndSettle();
+    expect(pending, findsOneWidget);
+    expect(tester.getRect(pending).bottom, lessThanOrEqualTo(308));
+    expect(tester.takeException(), isNull);
+    await _dispose(tester, service, conversations);
+  });
 
   testWidgets('narrow phone keeps drawer and composer within its page', (
     tester,

@@ -268,6 +268,94 @@ void main() {
   }
 
   const pendingContactReply = '角色[sophie_plachta_doll]：WeChatってどんな連絡方法なの？';
+  testWidgets(
+    'device Kala agreement opens confirmation and the canonical message contact',
+    (tester) async {
+      final fixture = await _NpcContactScreenFixture.open(
+        tester,
+        characterId: 'ryza',
+        replyLanguage: AppLanguage.japanese,
+        replies: const [
+          _ScreenReply(
+            '角色[カラ]：ほう、わしと連絡先を交換したいとな？　よかろう。そなたとなら、時折こうして近況を知らせ合うのも悪くない。\n'
+            '莱莎：やった！　これでカラともすぐ連絡が取れるね。',
+          ),
+        ],
+      );
+      await fixture.send('卡菈，能和我交换联系方式吗');
+      await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+      expect(find.textContaining('卡菈·伊迪亚斯同意'), findsOneWidget);
+      expect(fixture.controller.npcMessagingContacts, isEmpty);
+      expect(fixture.controller.messages.last.text, startsWith('角色[kala]：'));
+      await tester.tap(find.text('加入信息'));
+      await fixture.waitForIdle();
+      expect(
+        fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+        ['kala'],
+      );
+      await fixture.openMessages();
+      final contact = find.byKey(const ValueKey('npc-contact-kala'));
+      expect(contact, findsOneWidget);
+      await tester.tap(contact);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('npc-draft-kala')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final (requestName, replyName) in [
+    ('fee', '菲'),
+    ('菲', 'Fi'),
+    ('フィー', 'Fee'),
+  ]) {
+    testWidgets(
+      'Fee contact maps $requestName to $replyName without a second identity',
+      (tester) async {
+        final fixture = await _NpcContactScreenFixture.open(
+          tester,
+          characterId: 'ryza',
+          replyLanguage: AppLanguage.japanese,
+          replies: [_ScreenReply('角色[$replyName]：もちろん、連絡先を交換しましょう。')],
+        );
+        await fixture.send('$requestName，可以交换联系方式吗？');
+        await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+        expect(find.textContaining('菲同意'), findsOneWidget);
+        expect(fixture.controller.messages.last.text, startsWith('角色[fee]：'));
+        await tester.tap(find.text('加入信息'));
+        await fixture.waitForIdle();
+        expect(
+          fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+          ['fee'],
+        );
+        await fixture.openMessages();
+        expect(find.byKey(const ValueKey('npc-contact-fee')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('Federica contact request does not accidentally target Fee', (
+    tester,
+  ) async {
+    final fixture = await _NpcContactScreenFixture.open(
+      tester,
+      characterId: 'ryza',
+      replyLanguage: AppLanguage.japanese,
+      replies: const [_ScreenReply('角色[federica]：もちろん、連絡先を交換しましょう。')],
+    );
+    await fixture.send('菲德丽卡，可以交换联系方式吗？');
+    await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+    expect(find.textContaining('菲德丽卡·兰伯蒂同意'), findsOneWidget);
+    await tester.tap(find.text('加入信息'));
+    await fixture.waitForIdle();
+    expect(
+      fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+      ['federica'],
+    );
+    expect(fixture.controller.isNpcContactAdded('fee'), isFalse);
+    expect(tester.takeException(), isNull);
+  });
+  const neutralNpcReply = '角色[sophie_plachta_doll]：今日はいい天気ですね。';
   const smsAgreementReply =
       '角色[sophie_plachta_doll]：SMSでも構わないわ。'
       'そちらのほうが都合がいいなら、交換しましょう。';
@@ -321,6 +409,173 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('an unnamed contact question uses the recent scene NPC target', (
+    tester,
+  ) async {
+    final fixture = await _NpcContactScreenFixture.open(
+      tester,
+      replies: const [
+        _ScreenReply(neutralNpcReply),
+        _ScreenReply(smsAgreementReply),
+      ],
+    );
+    await fixture.send('今天的天气怎么样？');
+    await fixture.waitForIdle();
+    await fixture.send('能否交换联系方式？');
+    await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+    expect(fixture.receivedUserText.last, contains('能否交换联系方式'));
+    expect(fixture.controller.npcMessagingContacts, isEmpty);
+    await tester.tap(find.text('加入信息'));
+    await fixture.waitForIdle();
+    expect(
+      fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+      ['sophie_plachta_doll'],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Ryza dialogue accepts a named NPC contact request and opens her messages',
+    (tester) async {
+      final fixture = await _NpcContactScreenFixture.open(
+        tester,
+        characterId: 'ryza',
+        replyLanguage: AppLanguage.chinese,
+        replies: const [_ScreenReply('科洛蒂娅说：那就交换联系方式吧。')],
+      );
+      await fixture.send('科洛蒂娅，我们之后可以通过微信联系吗？');
+      await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+      expect(find.textContaining('科洛蒂娅·巴兰茨同意通过微信联系'), findsOneWidget);
+      expect(fixture.controller.npcMessagingContacts, isEmpty);
+      expect(fixture.controller.messages.last.text, startsWith('角色[claudia]：'));
+      await tester.tap(find.text('加入信息'));
+      await fixture.waitForIdle();
+      expect(
+        fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+        ['claudia'],
+      );
+
+      await fixture.openMessages();
+      final contact = find.byKey(const ValueKey('npc-contact-claudia'));
+      expect(contact, findsOneWidget);
+      await tester.tap(contact);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('npc-draft-claudia')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('language repair preserves a named Ryza NPC contact identity', (
+    tester,
+  ) async {
+    final fixture = await _NpcContactScreenFixture.open(
+      tester,
+      characterId: 'ryza',
+      replyLanguage: AppLanguage.japanese,
+      replies: const [_ScreenReply('科洛蒂娅说：当然可以，我们以后通过微信联系吧。')],
+      languageCorrectionReply:
+          '{"corrections":[{"id":0,"text":"もちろん、連絡先を交換しましょう。"}]}',
+    );
+    await fixture.send('科洛蒂娅，可以交换联系方式吗？');
+    await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+    expect(fixture.languageCorrectionRequests, hasLength(1));
+    final request = fixture.languageCorrectionRequests.single;
+    final lines = request['lines'] as List;
+    expect(lines, hasLength(1));
+    expect(lines.single['id'], 0);
+    expect(lines.single['target_language'], 'Japanese');
+    expect(lines.single['text'], '当然可以，我们以后通过微信联系吧。');
+    expect(
+      fixture.controller.messages.last.text,
+      '角色[claudia]：もちろん、連絡先を交換しましょう。',
+    );
+    expect(fixture.controller.messages.last.text, isNot(contains('莱莎：')));
+    expect(fixture.controller.npcMessagingContacts, isEmpty);
+    await tester.tap(find.text('加入信息'));
+    await fixture.waitForIdle();
+    expect(
+      fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+      ['claudia'],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an unnamed Ryza scene request binds the NPC in the LLM prompt', (
+    tester,
+  ) async {
+    final fixture = await _NpcContactScreenFixture.open(
+      tester,
+      characterId: 'ryza',
+      replyLanguage: AppLanguage.chinese,
+      replies: const [
+        _ScreenReply('科洛蒂娅：今天的天气很适合出门呢。'),
+        _ScreenReply('角色[claudia]：当然可以，我们交换联系方式吧。'),
+      ],
+    );
+    await fixture.send('科洛蒂娅，今天的天气怎么样？');
+    await fixture.waitForIdle();
+    expect(find.text('加入信息'), findsNothing);
+    await fixture.send('能否交换联系方式？');
+    await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+    expect(fixture.receivedSystemPrompts, hasLength(2));
+    expect(
+      fixture.receivedSystemPrompts.last,
+      contains('claudia=科洛蒂娅·巴兰茨/クラウディア・バレンツ'),
+    );
+    expect(fixture.receivedSystemPrompts.last, contains('即使用户没有重复 NPC 名称'));
+    expect(fixture.controller.npcMessagingContacts, isEmpty);
+    await tester.tap(find.text('加入信息'));
+    await fixture.waitForIdle();
+    expect(
+      fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+      ['claudia'],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'an unnamed contact request accepts the NPC appearing in its completed reply',
+    (tester) async {
+      final fixture = await _NpcContactScreenFixture.open(
+        tester,
+        characterId: 'ryza',
+        replyLanguage: AppLanguage.chinese,
+        replies: const [_ScreenReply('角色[claudia]：当然可以，我们交换联系方式吧。')],
+      );
+      // The initial scene has no identified NPC speaker. This request must
+      // remain available for the NPC who responds in this same generation.
+      await fixture.send('能否交换联系方式？');
+      await fixture.waitFor(() => find.text('加入信息').evaluate().isNotEmpty);
+      expect(find.textContaining('科洛蒂娅·巴兰茨同意通过联系方式联系'), findsOneWidget);
+      expect(fixture.controller.npcMessagingContacts, isEmpty);
+      await tester.tap(find.text('加入信息'));
+      await fixture.waitForIdle();
+      expect(
+        fixture.controller.npcMessagingContacts.map((contact) => contact.id),
+        ['claudia'],
+      );
+      await fixture.openMessages();
+      expect(find.byKey(const ValueKey('npc-contact-claudia')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('the main character cannot accept an unresolved NPC request', (
+    tester,
+  ) async {
+    final fixture = await _NpcContactScreenFixture.open(
+      tester,
+      characterId: 'ryza',
+      replyLanguage: AppLanguage.chinese,
+      replies: const [_ScreenReply('莱莎：当然可以，我们交换联系方式吧。')],
+    );
+    await fixture.send('能否交换联系方式？');
+    await fixture.waitForIdle();
+    expect(find.text('加入信息'), findsNothing);
+    expect(fixture.controller.npcMessagingContacts, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('failed request cannot continue into an SMS alternative', (
     tester,
@@ -465,18 +720,25 @@ class _NpcContactScreenFixture {
     this.controller,
     this.receivedUserText,
     this.heldReplies,
+    this.receivedSystemPrompts,
+    this.languageCorrectionRequests,
   );
 
   final WidgetTester tester;
   final AppController controller;
   final List<String> receivedUserText;
   final List<Completer<void>> heldReplies;
+  final List<String> receivedSystemPrompts;
+  final List<Map<String, dynamic>> languageCorrectionRequests;
 
   Finder get sendButton => find.byKey(const ValueKey('chat-send-button'));
 
   static Future<_NpcContactScreenFixture> open(
     WidgetTester tester, {
     required List<_ScreenReply> replies,
+    String characterId = 'sophie',
+    AppLanguage replyLanguage = AppLanguage.japanese,
+    String? languageCorrectionReply,
   }) async {
     tester.view.physicalSize = const Size(390, 800);
     tester.view.devicePixelRatio = 1;
@@ -500,14 +762,20 @@ class _NpcContactScreenFixture {
     ))!;
     final receivedUserText = <String>[];
     final heldReplies = <Completer<void>>[];
+    final receivedSystemPrompts = <String>[];
+    final languageCorrectionRequests = <Map<String, dynamic>>[];
     final serving = server.listen((request) async {
       request.response.persistentConnection = false;
       final body = await utf8.decoder.bind(request).join();
       final data = jsonDecode(body) as Map<String, dynamic>;
+      final requestMessages = data['messages'] as List;
       if (data['stream'] == true) {
         final replyIndex = receivedUserText.length;
         receivedUserText.add(
           ((data['messages'] as List).last as Map)['content'] as String,
+        );
+        receivedSystemPrompts.add(
+          (requestMessages.first as Map)['content'] as String,
         );
         // Unexpected extra main-chat calls must fail rather than accidentally
         // recycling consent from an earlier fixture response.
@@ -551,12 +819,26 @@ class _NpcContactScreenFixture {
           request.response.write('{"error":"fixture rejected request"}');
         }
       } else {
+        final isLanguageCorrection =
+            ((requestMessages.first as Map)['content'] as String).contains(
+              '专用语言纠正器',
+            );
+        if (isLanguageCorrection) {
+          languageCorrectionRequests.add(
+            jsonDecode((requestMessages.last as Map)['content'] as String)
+                as Map<String, dynamic>,
+          );
+        }
         request.response.headers.contentType = ContentType.json;
         request.response.write(
           jsonEncode({
             'choices': [
               {
-                'message': {'content': '{"segments":[]}'},
+                'message': {
+                  'content': isLanguageCorrection
+                      ? languageCorrectionReply ?? '{"corrections":[]}'
+                      : '{"segments":[]}',
+                },
               },
             ],
           }),
@@ -571,20 +853,45 @@ class _NpcContactScreenFixture {
       }
     });
     SharedPreferences.setMockInitialValues({
-      'active_character_id_v1': 'sophie',
+      'active_character_id_v1': characterId,
+      // Contact flow does not exercise Spine. Standing avoids the separate
+      // native chair drawable, which is not initialized in widget tests.
+      if (characterId == 'ryza') 'selected_character_appearance': 'standing_99',
       'ai_enabled': true,
       'fish_tts_enabled': true,
       'openai_base_url': 'http://127.0.0.1:${server.port}/v1',
     });
     FlutterSecureStorage.setMockInitialValues({'openai_api_key': 'test-only'});
-    final controller = await AppController.load();
+    // Ryza loads its catalog assets from the test bundle. Keep file I/O out of
+    // the widget test's fake clock, as for the loopback server above.
+    final controller = (await tester.runAsync(AppController.load))!;
+    if (characterId == 'ryza') {
+      controller.selectedCharacterAppearanceId = 'standing_99';
+      // Leave native renderers in their loading state. These tests exercise
+      // the real chat and phone controls, without requiring a platform Spine
+      // DLL; animation playback has its own native integration suite.
+      messenger.setMockMessageHandler('flutter/assets', (message) {
+        final key = message == null
+            ? ''
+            : utf8.decode(
+                message.buffer.asUint8List(
+                  message.offsetInBytes,
+                  message.lengthInBytes,
+                ),
+              );
+        if (key.endsWith('.atlas')) {
+          return Completer<ByteData?>().future;
+        }
+        return messenger.delegate.send('flutter/assets', message);
+      });
+    }
     controller.agentEnabled = false;
     controller.independentSpeechPerformance = false;
     controller.longTermMemoryEnabled = false;
     controller.configureLanguages(
       interface: AppLanguage.chinese,
       narrator: AppLanguage.chinese,
-      characterReply: AppLanguage.japanese,
+      characterReply: replyLanguage,
       translation: TranslationLanguage.none,
     );
     addTearDown(() async {
@@ -599,6 +906,9 @@ class _NpcContactScreenFixture {
         await support.delete(recursive: true);
       });
       messenger.setMockMethodCallHandler(pathProvider, null);
+      if (characterId == 'ryza') {
+        messenger.setMockMessageHandler('flutter/assets', null);
+      }
       HttpOverrides.global = originalOverrides;
     });
     await tester.pumpWidget(
@@ -623,6 +933,8 @@ class _NpcContactScreenFixture {
       controller,
       receivedUserText,
       heldReplies,
+      receivedSystemPrompts,
+      languageCorrectionRequests,
     );
   }
 
@@ -648,7 +960,9 @@ class _NpcContactScreenFixture {
     await tester.enterText(
       find.byWidgetPredicate(
         (widget) =>
-            widget is TextField && widget.decoration?.hintText == '和苏菲说点什么…',
+            widget is TextField &&
+            widget.decoration?.hintText ==
+                '和${controller.activeCharacterProfile.names.chinese}说点什么…',
       ),
       text,
     );

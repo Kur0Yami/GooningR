@@ -16,28 +16,81 @@ enum RuntimeLogModule {
   translation,
   character,
   storage,
+  singing,
+  soundscape,
+  alarm,
+  relay,
   system;
+
+  static final _sourceSeparators = RegExp(r'[^a-z0-9]');
+  static final _aiSourcePrefix = RegExp(r'^ai(?:$|[\s._:/-])');
 
   static RuntimeLogModule forSource(String source) {
     final name = source.trim().toLowerCase();
-    if (name == 'plan_character_expression') return expression;
-    if (name == 'plan_character_action' || name == 'actionplanner') {
+    // Sources are diagnostic labels, not serialized module names. Normalize
+    // separators so CamelCase, snake_case and display labels classify alike,
+    // while retaining the original source and stored entry identity.
+    final compact = name.replaceAll(_sourceSeparators, '');
+    // Persistence wins over the feature prefix: TranslationPersistence and
+    // NpcPersistence describe a storage failure, not a translation/chat call.
+    if (compact.contains('persistence') ||
+        compact.startsWith('dataimport') ||
+        compact.startsWith('dataexport') ||
+        compact.contains('dataconversion') ||
+        compact.startsWith('attachment')) {
+      return storage;
+    }
+    if (compact.startsWith('pcagent') || compact.startsWith('relay')) {
+      return relay;
+    }
+    if (compact.startsWith('plansing') ||
+        compact.startsWith('singingplanner')) {
+      return singing;
+    }
+    if (compact.startsWith('plancharacterexpression') ||
+        compact.startsWith('expressionplanner')) {
+      return expression;
+    }
+    if (compact.startsWith('plancharacteraction') ||
+        compact.startsWith('actionplanner')) {
       return action;
     }
-    if (name == 'speechplanner') return speech;
-    if (name == 'memory') return memory;
-    if (name == 'translation') return translation;
-    if (name == 'llm' || name == 'ai' || name.startsWith('ai ')) return llm;
-    if (name.contains('tts') || name.contains('fish audio')) return tts;
-    if (name.startsWith('character') ||
-        name == 'lipsync' ||
-        name == 'skinimport') {
+    if (compact.startsWith('speechplanner') ||
+        compact.startsWith('planspeech')) {
+      return speech;
+    }
+    if (compact.startsWith('memory') || compact.startsWith('horae')) {
+      return memory;
+    }
+    if (compact.startsWith('translation')) return translation;
+    if (compact.startsWith('llm') ||
+        _aiSourcePrefix.hasMatch(name) ||
+        compact == 'aiclient' ||
+        compact == 'aiservices' ||
+        compact == 'agent' ||
+        compact.startsWith('agenttool')) {
+      return llm;
+    }
+    if (compact.contains('tts') ||
+        compact.contains('fishaudio') ||
+        compact.startsWith('cosyvoice')) {
+      return tts;
+    }
+    if (compact.startsWith('character') ||
+        compact.startsWith('lipsync') ||
+        compact.startsWith('skinimport') ||
+        compact.startsWith('spine') ||
+        compact == 'interaction') {
       return character;
     }
-    if (name == 'persistence' ||
-        name.contains('data import') ||
-        name.contains('data conversion')) {
-      return storage;
+    if (compact.startsWith('soundscape') ||
+        compact.startsWith('backgroundmusic') ||
+        compact == 'bgm' ||
+        compact.startsWith('ambience')) {
+      return soundscape;
+    }
+    if (compact.startsWith('alarm') || compact.startsWith('voicealarm')) {
+      return alarm;
     }
     // New sources remain visible rather than silently disappearing.
     return system;

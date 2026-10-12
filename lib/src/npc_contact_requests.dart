@@ -48,6 +48,7 @@ class NpcContactRequestDetector {
     required Iterable<NpcChatContact> contacts,
     Iterable<String> fallbackContactIds = const [],
     NpcContactRequest? precedingRequest,
+    bool allowUnresolvedTarget = false,
   }) {
     final text = _dialogueText(input);
     final catalog = contacts.toList(growable: false);
@@ -113,7 +114,7 @@ class NpcContactRequestDetector {
             .where((id) => !ids.contains(id)),
       );
     }
-    if (ids.isEmpty) return null;
+    if (ids.isEmpty && !allowUnresolvedTarget) return null;
     return NpcContactRequest(
       contactIds: List<String>.unmodifiable(ids),
       channel: channel,
@@ -132,15 +133,24 @@ class NpcContactRequestDetector {
   /// enough. The caller still asks the user before changing their contact list.
   static bool looksLikeAgreement(String reply) {
     final text = _dialogueText(reply);
-    if (text.isEmpty || looksLikeRefusal(text)) return false;
+    if (text.isEmpty ||
+        looksLikeRefusal(text) ||
+        _clauses(text).any(_thirdPartyDetails.hasMatch)) {
+      return false;
+    }
     final clauses = _clauses(text).map(_withoutCues).toList();
-    if (clauses.any(_hesitation.hasMatch)) return false;
+    if (clauses.any(_hesitation.hasMatch) ||
+        clauses.any(_futureContactCondition.hasMatch)) {
+      return false;
+    }
     return clauses.any((clause) {
       final trimmed = clause.trim();
       return !_reportedAgreement.hasMatch(trimmed) &&
           (_directAgreement.hasMatch(trimmed) ||
+              _archaicJapaneseAgreement.hasMatch(trimmed) ||
               _exchangeInvitation.hasMatch(trimmed) ||
               _channelAgreement.hasMatch(trimmed) ||
+              _japaneseContactAgreement.hasMatch(trimmed) ||
               _contactAgreement.hasMatch(trimmed));
     });
   }
@@ -152,10 +162,9 @@ class NpcContactRequestDetector {
     Iterable<NpcChatContact> contacts = const [],
   }) {
     final speech = _contactSpeech(reply, primaryCharacterId, contacts);
+    final targetIds = _replyTargets(request, speech, contacts);
     return List<String>.unmodifiable(
-      request.contactIds.where(
-        (id) => looksLikeAgreement(speech[id]?.join('\n') ?? ''),
-      ),
+      targetIds.where((id) => looksLikeAgreement(speech[id]?.join('\n') ?? '')),
     );
   }
 
@@ -168,7 +177,7 @@ class NpcContactRequestDetector {
     Iterable<NpcChatContact> contacts = const [],
   }) {
     final speech = _contactSpeech(reply, primaryCharacterId, contacts);
-    final ids = request.contactIds.where((id) {
+    final ids = _replyTargets(request, speech, contacts).where((id) {
       final words = speech[id]?.join('\n') ?? '';
       return words.trim().isNotEmpty && !looksLikeRefusal(words);
     }).toList();
@@ -177,6 +186,19 @@ class NpcContactRequestDetector {
       contactIds: List<String>.unmodifiable(ids),
       channel: request.channel,
     );
+  }
+
+  static Iterable<String> _replyTargets(
+    NpcContactRequest request,
+    Map<String, List<String>> speech,
+    Iterable<NpcChatContact> contacts,
+  ) {
+    if (request.contactIds.isNotEmpty) return request.contactIds;
+    // An explicit request without a known previous target may introduce a
+    // scene NPC in this reply. Only that NPC's own catalogued speech can
+    // resolve it; the primary character, narrator and translation cannot.
+    final known = contacts.map((contact) => contact.id).toSet();
+    return speech.keys.where(known.contains);
   }
 
   static Map<String, List<String>> _contactSpeech(
@@ -222,46 +244,94 @@ class NpcContactRequestDetector {
 
   static String _normalizeContactSpeakers(
     String reply,
-    Iterable<NpcChatContact> contacts,
-  ) {
+    Iterable<NpcChatContact> contacts, {
+    bool preserveTranslations = false,
+  }) {
     // Filter private model output before looking for speaker names. In
     // particular, a hidden name prefix must not rescue consent from <think>.
     final visible = filterAssistantControlMarkup(reply);
     final catalog = contacts.toList(growable: false);
     var translating = false;
+    var emptyTranslationNeedsBody = false;
     return visible
         .split('\n')
         .map((line) {
           final canonical = _canonicalSpeaker.firstMatch(line)?.group(1);
+          if (emptyTranslationNeedsBody && line.trim().isNotEmpty) {
+            final isNarratorOrTranslation =
+                canonical != null &&
+                RegExp(
+                  r'^(?:旁白|narrator|译文|translation)$',
+                  caseSensitive: false,
+                ).hasMatch(canonical);
+            if (!isNarratorOrTranslation) {
+              emptyTranslationNeedsBody = false;
+              return preserveTranslations ? line : '';
+            }
+          }
           if (canonical != null) {
             translating = RegExp(
               r'^(?:译文|translation)$',
               caseSensitive: false,
             ).hasMatch(canonical);
+            final prefix = _canonicalSpeaker.firstMatch(line)!;
+            emptyTranslationNeedsBody =
+                translating && line.substring(prefix.end).trim().isEmpty;
           }
           // A translation can contain a copied NPC name or speaker marker.
           // Never promote those continuation lines into original speech.
-          if (translating) return '';
-          final prefix = _namedSpeaker.firstMatch(line);
+          if (translating) return preserveTranslations ? line : '';
+          final prefix =
+              _qualifiedNamedSpeaker.firstMatch(line) ??
+              _namedSpeaker.firstMatch(line);
           if (prefix == null) return line;
           final label = (prefix.group(1) ?? prefix.group(2)!)
               .trim()
               .toLowerCase();
-          final matches = catalog
-              .where(
-                (contact) => contact.aliases.any(
-                  (alias) => alias.toLowerCase() == label,
-                ),
-              )
-              .toList(growable: false);
-          if (matches.length != 1) return line;
-          return '角色[${matches.single.id}]：${line.substring(prefix.end)}';
+          if (_nonSpeechAnnotation.hasMatch(prefix.group(0)!)) {
+            return preserveTranslations ? '旁白：${line.trim()}' : '';
+          }
+          final baseLabel = label.replaceFirst(
+            RegExp(r'\s*[（(][^）)]*[）)]$'),
+            '',
+          );
+          final domain =
+              catalog.any((contact) => contact.id.startsWith('sophie_'))
+              ? 'sophie'
+              : 'ryza';
+          final id =
+              resolveNpcContactId(
+                label,
+                contacts: catalog,
+                primaryCharacterId: domain,
+              ) ??
+              resolveNpcContactId(
+                baseLabel,
+                contacts: catalog,
+                primaryCharacterId: domain,
+              );
+          if (id == null) return line;
+          return '角色[$id]：${line.substring(prefix.end)}';
         })
         .join('\n');
   }
 
+  /// Canonicalize visible NPC speaker labels before language correction can
+  /// rebuild them as the primary character. Preserve translations for display.
+  static String normalizeContactSpeakers(
+    String reply,
+    Iterable<NpcChatContact> contacts,
+  ) => _normalizeContactSpeakers(reply, contacts, preserveTranslations: true);
+
   static final _namedSpeaker = RegExp(
-    r'^\s*(?:\*\*|__)?(?:角色\s*\[\s*([^\]\r\n]+?)\s*\]|([^：:\r\n]{1,80}?))(?:\*\*|__)?\s*[：:]\s*(?:\*\*|__)?',
+    r'^\s*(?:\*\*|__)?(?:角色\s*\[\s*([^\]\r\n]+?)\s*\]|([^：:\r\n]{1,80}?))(?:\*\*|__)?\s*(?:[（(][^）)]{1,40}[）)])?\s*(?:说(?:道|着)?|问(?:道|着)?|答(?:道|着)?|表示|回应|笑着说)?\s*[：:]\s*(?:\*\*|__)?',
+  );
+  static final _qualifiedNamedSpeaker = RegExp(
+    r'^\s*(?:\*\*|__)?([^：:\r\n]{1,80}?[（(][^）)]{1,40}[）)])\s*[：:]\s*(?:\*\*|__)?',
+  );
+  static final _nonSpeechAnnotation = RegExp(
+    r'[（(][^）)]*(?:译文|翻译|旁白|内心|心声|thought|translation|narration|翻訳|心の声)[^）)]*[）)]',
+    caseSensitive: false,
   );
   static final _canonicalSpeaker = RegExp(
     r'^\s*(旁白|莱莎|苏菲|ソフィー|译文|narrator|ryza|sophie|translation|角色\s*\[[^\]\r\n]+\])\s*[：:]',
@@ -269,7 +339,10 @@ class NpcContactRequestDetector {
   );
 
   static const _contactObject =
-      r'(?:好友|朋友|联系人|联系方式|联络方式|联络|私信|微信|电报|短信|邮箱|邮件|連絡先|友達|交換|追加|\b(?:friend|contacts?|wechat|weixin|wx|qq|sms|line|discord|telegram|email|mail)\b)';
+      r'(?:好友|朋友|联系人|联系方式|联络方式|联络|通讯方式|通信方式|(?:电话|手机)号码?|私信|微信|电报|短信|邮箱|邮件|連絡先|友達|交換|追加|\b(?:friend|contacts?|phone\s+number|wechat|weixin|wx|qq|sms|line|discord|telegram|email|mail)\b)';
+
+  static const _contactDetails =
+      r'(?:联系方式|联络方式|通讯方式|通信方式|(?:电话|手机)号码?|連絡先|電話番号|\b(?:contacts?|phone\s+number)\b)';
 
   static const _channelObject =
       r'(?:微信|电报|短信|邮箱|邮件|\b(?:wechat|weixin|wx|qq|sms|line|discord|telegram|email|mail)\b)';
@@ -286,7 +359,13 @@ class NpcContactRequestDetector {
 
   static final _requestPattern = RegExp(
     '(?:添加|加上|加入|加个|加我|加你|加为|加一下|互加|加|交换|留下|留个|互留|获取|给我|给你|要个).{0,10}$_contactObject|'
+    '(?:问(?:你)?要|要(?:一个|个)?).{0,10}$_contactDetails|'
+    '(?:用|通过|使用).{0,8}$_channelObject.{0,8}(?:联系|联络|交换|加)|'
     '$_contactObject.{0,8}(?:交换|添加|加我|加你|给我|给你)|'
+    '(?:你(?:的)?|您(?:的)?).{0,4}(?:联系方式|联络方式|通讯方式|通信方式|(?:电话|手机)?号码)(?:是什么|是多少|有哪些|呢)(?:[吗么啊呀]?[？?。.]?\\s*)'
+    r'$|'
+    '(?:把|将)?你(?:的)?(?:电话|手机)?号码.{0,4}(?:给我|发我)|'
+    '(?:交换|互换).{0,12}$_contactObject|'
     r'\b(?:add|exchange|share|give|contact)\b.{0,20}'
     '$_contactObject|'
     r'(?:連絡先|LINE|QQ).{0,8}(?:交換|教えて|追加)|(?:交換|追加).{0,8}(?:連絡先|LINE|QQ)',
@@ -299,14 +378,19 @@ class NpcContactRequestDetector {
   );
 
   static final _shortRefusal = RegExp(
-    r'^(?:(?:抱歉|对不起|不好意思|sorry)[\s，,:：]*)?(?:不行|不可以|不能|不方便|不太方便|不愿意|不要|不了|算了|拒绝|无理|無理|嫌だ|できない|できません)(?:[啊呀哦呢吧です]*[。.!！?？]?)$|^(?:no|nope|not\s+now|i\s+(?:cannot|can\s+not|can[\x27’]t|won[\x27’]t))(?:[。.!！?？]?)$',
+    r'^(?:(?:抱歉|对不起|不好意思|sorry)[\s，,:：]*)?(?:不行|不可以|不能|不方便|不太方便|不愿意|不要|不了|算了|拒绝|无理|無理|嫌だ|できない|できません)(?:[啊呀哦呢吧です]*[。.!！?？]?)$|^(?:no|nope|not\s+now|i\s+(?:cannot|can\s+not|can[\x27’]t|won[\x27’]t))(?:[。.!！?？]?)$|'
+    '^(?:でも|しかし|だが|いや)?[\\s、]*$_archaicJapaneseRefusal'
+    r'(?:のじゃ|のだ|ぞ|よ|わ|です|から|ので|[\s、。.!！?？])*$',
     caseSensitive: false,
   );
   // Japanese negative polite forms ending in 「ませんか」 are invitations.
   // 「ませんから」 still states a refusal, so exclude only an actual question
   // ending rather than every occurrence of the syllable 「か」.
+  static const _archaicJapaneseRefusal =
+      r'(?:教え(?:ん|ぬ)|教えられ(?:ん|ぬ)|渡(?:さん|さぬ|せん|せぬ)|交換(?:は)?(?:せん|せぬ|できん|できぬ)|追加(?:は)?(?:せん|せぬ))';
   static const _japaneseRefusal =
-      r'(?:教えられない|教えない|教えたくない|教えません(?!か(?:ね|しら)?(?:$|[\s、]))|渡せない|交換できない|交換しない|交換したくない|交換しません(?!か(?:ね|しら)?(?:$|[\s、]))|追加しない|追加しません(?!か(?:ね|しら)?(?:$|[\s、]))|お断り|無理|嫌だ)';
+      r'(?:教えられない|教えない|教えたくない|教えません(?!か(?:ね|しら)?(?:$|[\s、]))|渡せない|交換できない|交換しない|交換したくない|交換しません(?!か(?:ね|しら)?(?:$|[\s、]))|追加しない|追加しません(?!か(?:ね|しら)?(?:$|[\s、]))|お断り|無理|嫌だ|'
+      '$_archaicJapaneseRefusal)';
   static final _contactRefusal = RegExp(
     '(?:不(?:能|可以|方便|愿意|想|加|留|告诉|提供)|拒绝|别加|不要加|无需添加|不给|不交换|不添加|$_japaneseRefusal).{0,20}$_contactObject|'
     '$_contactObject.{0,20}(?:不(?:能|可以|方便|愿意|想|加|留|告诉|提供)|不给|不交换|不添加|拒绝|$_japaneseRefusal)|'
@@ -320,6 +404,12 @@ class NpcContactRequestDetector {
     r'^(?:(?:うん|ええ)[、,\s]+)?(?:当然可以|当然没问题|当然好|当然|可以的|可以呀|可以啊|可以哦|可以|好呀|好啊|好的|好哦|好|没问题|没有问题|行啊|行呀|乐意|愿意|同意|いいわよ|いいわ|いいよ|いいですよ|いいです|いいとも|いいね|もちろん(?:いいわよ|いいわ|いいよ|いいですよ)?|はい|喜んで|よろこんで|構わない|かまわない|大丈夫|了解です)[呀啊哦啦哟]?(?:$|[\s，,:：。.!！?？~～、]|加|给|交換|追加)|^\b(?:yes|yeah|yep|sure|absolutely|certainly|of\s+course|no\s+problem|okay|ok)\b',
     caseSensitive: false,
   );
+  // Kala's completed replies use elder speech such as 「よかろう」 instead
+  // of 「いいよ」. Keep a direct clause boundary so a conjugation, question
+  // or conditional does not become consent merely by sharing its prefix.
+  static final _archaicJapaneseAgreement = RegExp(
+    r'^(?:(?:ふむ|ほう|うむ|うん|ええ|はい)[、,\s]+)?(?:よかろう|よいぞ|いいぞ|構わん|かまわん|いいじゃろう|よいじゃろう|もちろんじゃ)(?:$|[\s，,:：。.!！?？~～、]|交換|追加)',
+  );
   static final _exchangeInvitation = RegExp(
     r'^(?:(?:うん|ええ|はい|よいぞ|いいぞ)[、,\s]+)?(?:交換しましょう|交換しよう|交換してやろう)(?:よ|ね|わ)?$',
   );
@@ -330,6 +420,10 @@ class NpcContactRequestDetector {
   );
   static final _contactAgreement = RegExp(
     '(?:可以|同意|愿意|乐意|没问题|当然|给你|这是我的|这就是我的|加我|加你|加上|加吧|加进|交换吧).{0,20}$_contactObject|'
+    '(?:那(?:么|就|我们)?|我们)(?:以后|就|可以|来|一起)?(?:交换|互换|互加).{0,8}$_contactObject(?:吧|呀|啊|哦)?'
+    r'$|'
+    '(?:那(?:么|就|我们)?|我们)(?:以后|就)?(?:用|通过|使用)$_channelObject联系(?:吧|呀|啊|哦)?'
+    r'$|'
     '$_contactObject.{0,20}(?:给你|发给你|没问题|可以加|加吧|交換しよう|交換しましょう|交換してやろう|教える|教えます|追加して|追加しよう)|'
     '$_contactObject.{0,20}'
     r'交換しませんか(?:ね|しら)?(?=$|[\s、])|'
@@ -337,9 +431,32 @@ class NpcContactRequestDetector {
     '$_contactObject',
     caseSensitive: false,
   );
+  static final _japaneseContactAgreement = RegExp(
+    r'(?:連絡先|LINE|SNS|電話番号).{0,16}(?:交換してもいい|交換できます|交換しても大丈夫|教えてもいい|教えられます)|'
+    r'(?:交換してもいい|交換できます|交換しても大丈夫|教えてもいい|教えられます).{0,16}(?:連絡先|LINE|SNS|電話番号)',
+    caseSensitive: false,
+  );
+  static final _thirdPartyDetails = RegExp(
+    r'(?:别人的|他人的|朋友的|她的|他的).{0,8}(?:联系方式|微信|QQ|号码).{0,12}(?:给你|发给你|提供|交换|添加)|'
+    r'(?:给你|发给你|提供|交换).{0,12}(?:别人的|他人的|朋友的|她的|他的).{0,8}(?:联系方式|微信|QQ|号码)|'
+    r'(?:別の人|他の人|彼女|彼|友達)の.{0,8}(?:連絡先|LINE|SNS|電話番号).{0,12}(?:交換|教え|渡し|渡せ|知らせ)|'
+    r'(?:交換|教え|渡し|渡せ|知らせ).{0,12}(?:別の人|他の人|彼女|彼|友達)の.{0,8}(?:連絡先|LINE|SNS|電話番号)|'
+    r'あなたに(?:は)?(?:では|じゃ)ありません|君に(?:は)?(?:では|じゃ)ない',
+    caseSensitive: false,
+  );
   static final _hesitation = RegExp(
     r'考虑一下|再考虑|再说|以后再|先等等|还没决定|尚未决定|不确定|也许|可能吧|看情况|不知道|わからない|分からない|考えさせて|また今度|まだ決め|\b(?:maybe|perhaps|not\s+sure|not\s+ready|not\s+comfortable|undecided|later|let\s+me\s+think|need\s+to\s+think)\b',
     caseSensitive: false,
+  );
+  // Future trust or approval is a prerequisite, not a present agreement.
+  // Personal wording like the device reply's 「そなたとなら」 and a warning
+  // about slow replies impose no such prerequisite and remain eligible.
+  static final _futureContactCondition = RegExp(
+    r'(?:仲良く|親しく)(?:なれたら|なったら|なれば|なった後|なってから)|'
+    r'(?:信頼|信用|安心).{0,12}(?:できたら|できるようになったら|できれば|できるなら|できるまで)|'
+    r'(?:許可|承認|準備|用意|都合).{0,8}(?:できたら|できれば|出たら|得られたら|ついたら|整ったら|整えば)|'
+    r'(?:その時|そのとき|いつか|いずれ|そのうち).{0,12}(?:交換|教え|よかろう|構わん|かまわん|いいじゃろう)|'
+    r'(?:約束|条件).{0,8}(?:守れたら|守れば|満たせたら|満たせば)',
   );
   static final _reportedAgreement = RegExp(
     r'(?:她|他|别人|对方|朋友).{0,4}(?:说|同意|愿意)|听说|据说|(?:彼女|彼|友達|相手).{0,8}(?:言|話|答)|(?:と|って)(?:は)?(?:言|話|聞|答)|\b(?:he|she|they)\s+(?:said|says|agreed|agrees)\b',

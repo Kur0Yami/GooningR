@@ -2,6 +2,7 @@ import 'app_controller.dart';
 import 'character_expression.dart';
 import 'character_performance.dart';
 import 'character_state.dart';
+import 'npc_chat_contacts.dart';
 
 enum ChatSpeaker { narrator, ryza, character, translation }
 
@@ -34,6 +35,9 @@ final RegExp _speakerPrefix = RegExp(
 final RegExp _inlineSpeakerPrefix = RegExp(
   r'(旁白|莱莎|苏菲|ソフィー|译文|narrator|ryza|sophie|translation|角色\s*\[\s*([^\]\r\n]+?)\s*\])\s*[：:]',
   caseSensitive: false,
+);
+final RegExp _namedNpcSpeakerPrefix = RegExp(
+  r'^\s*(?:\*\*|__)?([^：:\r\n]{1,80}?)(?:\*\*|__)?\s*[：:]\s*(?:\*\*|__)?',
 );
 final RegExp _fishCue = RegExp(r'\[[^\[\]\r\n]+\]');
 final RegExp _faceCue = RegExp(
@@ -410,6 +414,7 @@ List<ChatSegment> parseAssistantSegments(
   ChatSpeaker? activeSpeaker;
   String? activeCharacterId;
   var primaryCharacterId = defaultPrimaryCharacterId;
+  var emptyTranslationNeedsBody = false;
 
   for (final rawLine in _expandInlineSpeakerLines(response)) {
     final line = rawLine.trim();
@@ -419,6 +424,17 @@ List<ChatSegment> parseAssistantSegments(
     if (_metadataLine.hasMatch(line)) continue;
 
     final prefix = _speakerPrefix.firstMatch(line);
+    if (emptyTranslationNeedsBody) {
+      final label = prefix?.group(1)?.toLowerCase();
+      if (label != '译文' &&
+          label != 'translation' &&
+          label != '旁白' &&
+          label != 'narrator') {
+        segments.add(ChatSegment(speaker: ChatSpeaker.translation, text: line));
+        emptyTranslationNeedsBody = false;
+        continue;
+      }
+    }
     if (prefix != null) {
       final label = prefix.group(1)?.toLowerCase();
       activeSpeaker = switch (label) {
@@ -438,9 +454,15 @@ List<ChatSegment> parseAssistantSegments(
         primaryCharacterId = 'sophie';
       }
       activeCharacterId = activeSpeaker == ChatSpeaker.character
-          ? prefix.group(2)?.toLowerCase()
+          ? resolveNpcContactId(
+                  prefix.group(2) ?? '',
+                  primaryCharacterId: defaultPrimaryCharacterId,
+                ) ??
+                prefix.group(2)?.trim().toLowerCase()
           : null;
       final content = line.substring(prefix.end).trim();
+      emptyTranslationNeedsBody =
+          activeSpeaker == ChatSpeaker.translation && content.isEmpty;
       if (content.isNotEmpty) {
         segments.add(
           ChatSegment(
@@ -450,6 +472,35 @@ List<ChatSegment> parseAssistantSegments(
             primaryCharacterId: activeSpeaker == ChatSpeaker.ryza
                 ? primaryCharacterId
                 : null,
+          ),
+        );
+      }
+      continue;
+    }
+
+    // Historical and streamed output can use a translated display name
+    // instead of 角色[id]. Keep it on the same identity as contact storage.
+    // A name copied inside a translation continuation stays a translation.
+    final namedPrefix = activeSpeaker == ChatSpeaker.translation
+        ? null
+        : _namedNpcSpeakerPrefix.firstMatch(line);
+    final namedId = namedPrefix == null
+        ? null
+        : resolveNpcContactId(
+            namedPrefix.group(1)!,
+            primaryCharacterId: defaultPrimaryCharacterId,
+          );
+    if (namedId != null) {
+      activeSpeaker = ChatSpeaker.character;
+      activeCharacterId = namedId;
+      emptyTranslationNeedsBody = false;
+      final content = line.substring(namedPrefix!.end).trim();
+      if (content.isNotEmpty) {
+        segments.add(
+          ChatSegment(
+            speaker: ChatSpeaker.character,
+            text: content,
+            characterId: namedId,
           ),
         );
       }
@@ -509,10 +560,19 @@ Iterable<String> _expandInlineSpeakerLines(String response) sync* {
   }
 }
 
-List<List<ChatSegment>> groupAssistantSegmentsForDisplay(String response) {
-  final segments = parseAssistantSegments(response)
-      .where((segment) => displayTextForAssistantSegment(segment).isNotEmpty)
-      .toList(growable: false);
+List<List<ChatSegment>> groupAssistantSegmentsForDisplay(
+  String response, {
+  String defaultPrimaryCharacterId = 'ryza',
+}) {
+  final segments =
+      parseAssistantSegments(
+            response,
+            defaultPrimaryCharacterId: defaultPrimaryCharacterId,
+          )
+          .where(
+            (segment) => displayTextForAssistantSegment(segment).isNotEmpty,
+          )
+          .toList(growable: false);
   if (segments.isEmpty && response.trim().isNotEmpty) {
     final clean = filterAssistantControlMarkup(response).trim();
     if (clean.isEmpty) return const [];

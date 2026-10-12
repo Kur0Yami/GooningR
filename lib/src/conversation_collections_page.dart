@@ -267,7 +267,7 @@ class _CollectionsState extends State<ConversationCollectionsPage> {
         for (final card in _cards.where(_matches))
           Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: GlassSurface(
+            child: GlassContentCard(
               liquidGlass: widget.controller.liquidGlassChatUi,
               child: Padding(
                 padding: const EdgeInsets.all(12),

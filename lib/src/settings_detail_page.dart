@@ -21,10 +21,7 @@ Future<T?> pushSettingsPage<T>({
     ),
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       if (MediaQuery.disableAnimationsOf(context)) return child;
-      final curve = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-      );
+      final curve = animation.drive(CurveTween(curve: Curves.easeOutCubic));
       return FadeTransition(
         opacity: curve,
         child: SlideTransition(

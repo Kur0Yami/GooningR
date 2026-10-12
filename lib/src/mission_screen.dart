@@ -301,7 +301,8 @@ class _EmptyQuestState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: Padding(
+    child: SingleChildScrollView(
+      key: const ValueKey('empty-quest-guidance-scroll'),
       padding: const EdgeInsets.all(32),
       child: Column(
         mainAxisSize: MainAxisSize.min,
