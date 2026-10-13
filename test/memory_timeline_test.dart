@@ -174,7 +174,7 @@ void main() {
   });
 
   test(
-    'critical history survives omitted candidate and summaries are bounded',
+    'critical history survives and candidate summaries retain complete text',
     () {
       final previous = MemoryTimeline.normalizeExisting(
         jsonEncode({
@@ -207,11 +207,135 @@ void main() {
       );
       final entries = result['entries'] as List;
       expect(entries.first['summary'], '两人约定第二天一起采集。');
-      expect((entries.last['summary'] as String).runes.length, 50);
+      expect(entries.last['summary'], '莱莎' * 70);
       expect(entries.last['key_quotes'], isNull);
       expect(entries.map((e) => e['id']), ['AM0001', 'AM0002']);
     },
   );
+
+  test(
+    'oversized model summaries reject the batch instead of losing a fact',
+    () {
+      final result = MemoryTimeline.normalizeCandidate(
+        jsonEncode({
+          'entries': [
+            {'summary': '未经过概括的原始长回复' * 60},
+            {'summary': '用户与莱莎确认明天一起采集药草。'},
+          ],
+        }),
+        previousMemory: '',
+      );
+      expect(result, isNull);
+    },
+  );
+
+  test(
+    'empty or cue-only new entries fail but an explicit empty delta succeeds',
+    () {
+      for (final entry in [
+        {'summary': ''},
+        {'summary': '   '},
+        {'summary': '[happy][emphasis]'},
+        {'summary': '<think>内部信息</think>'},
+        {'summary': 123},
+        'invalid entry',
+      ]) {
+        expect(
+          MemoryTimeline.normalizeCandidate(
+            jsonEncode({
+              'entries': [entry],
+            }),
+            previousMemory: '',
+          ),
+          isNull,
+          reason: '$entry',
+        );
+      }
+      expect(
+        MemoryTimeline.normalizeCandidate('{"entries":[]}', previousMemory: ''),
+        isNotNull,
+      );
+    },
+  );
+
+  test('invalid old rewrites are ignored before validating new entry text', () {
+    final previous = MemoryTimeline.normalizeExisting(
+      jsonEncode({
+        'entries': [
+          {'sequence': 1, 'summary': '用户已经确认的旧约定'},
+        ],
+      }),
+    );
+    final result = MemoryTimeline.normalizeCandidate(
+      jsonEncode({
+        'entries': [
+          {'sequence': 1, 'summary': '[happy]'},
+        ],
+      }),
+      previousMemory: previous,
+    );
+    expect(result, isNotNull);
+    expect(
+      (_decode(result!)['entries'] as List).single['summary'],
+      '用户已经确认的旧约定',
+    );
+  });
+
+  test(
+    'new candidate delivery cues never enter saved memory or translation',
+    () {
+      final result = _decode(
+        MemoryTimeline.normalizeCandidate(
+          jsonEncode({
+            'entries': [
+              {
+                'summary': '[happy]ライザとユーザーが明日の採集を[emphasis]約束した。',
+                'translation': '[happy]莱莎与用户约定明天采集。',
+                'importance': 5,
+                'key_quotes': ['[whispering]明日一緒に行こう。'],
+              },
+            ],
+          }),
+          previousMemory: '',
+        )!,
+      );
+      final entry = (result['entries'] as List).single as Map;
+      expect(entry['summary'], 'ライザとユーザーが明日の採集を約束した。');
+      expect(entry['translation'], '莱莎与用户约定明天采集。');
+      expect(entry['key_quotes'], ['明日一緒に行こう。']);
+    },
+  );
+
+  test('cleaning legacy local metadata preserves sequence and manual text', () {
+    final result = _decode(
+      MemoryTimeline.normalizeExisting(
+        jsonEncode({
+          'last_sequence': 4,
+          'entries': [
+            {
+              'sequence': 1,
+              'source': 'local_ledger',
+              'summary': '[happy]我答应明天一起去森林[emphasis]。',
+            },
+            {
+              'sequence': 4,
+              'source': 'local_ledger',
+              'local_ledger_version': 2,
+              'summary': '用户确认物品变化：收到[苹果]。',
+            },
+            {'sequence': 5, 'summary': '用户手写备注：[happy]是语音标签。'},
+          ],
+        }),
+      ),
+    );
+    final entries = result['entries'] as List;
+    expect(entries.map((entry) => entry['sequence']), [1, 4, 5]);
+    expect(entries.first['summary'], '我答应明天一起去森林。');
+    expect(entries.first['local_ledger_version'], isNull);
+    expect(entries[1]['summary'], contains('[苹果]'));
+    expect(entries[1]['local_ledger_version'], 2);
+    expect(entries.last['summary'], '用户手写备注：[happy]是语音标签。');
+  });
 
   test(
     'automatic merge preserves omitted and manually edited ordinary facts',

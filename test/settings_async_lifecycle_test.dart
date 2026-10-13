@@ -283,6 +283,89 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'confirmed repair refreshes an existing card and its translation',
+    (tester) async {
+      final controller = await setup(tester, SettingsSection.data);
+      controller.configureAi(
+        enabled: true,
+        baseUrl: 'https://example.test/v1',
+        model: 'test-model',
+      );
+      controller.configureLongTermMemory(
+        enabled: true,
+        summary: jsonEncode({
+          'entries': [
+            {
+              'summary': '莱莎：[happy]えへへ、仲間のこと話すのが新鮮だなあ',
+              'translation': '旧译文',
+              'category': 'mood',
+              'source': 'local_ledger',
+            },
+          ],
+        }),
+      );
+      await tapVisible(tester, find.text('长期记忆'));
+      expect(find.text('旧译文'), findsOneWidget);
+      http.Response completion(Object content) => http.Response(
+        jsonEncode({
+          'choices': [
+            {
+              'message': {'content': jsonEncode(content)},
+            },
+          ],
+        }),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+      final client = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map;
+        final messages = body['messages'] as List;
+        final prompt = '${(messages.first as Map)['content']}';
+        if (prompt.contains('重新整理旧版本地事实记录')) {
+          return completion({
+            'entries': [
+              {
+                'sequence': 1,
+                'summary': '莱莎谈起伙伴时感到新鲜。',
+                'category': 'other',
+                'importance': 1,
+              },
+            ],
+          });
+        }
+        if (!prompt.contains('只翻译提供的记忆文本')) {
+          throw StateError('Unexpected memory request');
+        }
+        return completion({
+          'recent': [],
+          'entries': [
+            {'sequence': 1, 'translation': '伙伴话题的更新译文'},
+          ],
+        });
+      });
+      addTearDown(client.close);
+      final callback = tester
+          .widget<TextButton>(find.byKey(const ValueKey('memory-organize-now')))
+          .onPressed!;
+      final action = http.runWithClient(
+        () async => await (callback as dynamic)(),
+        () => client,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('待确认长期记忆'), findsOneWidget);
+      expect(find.text('重新整理旧记忆'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('manual-memory-confirm')));
+      await tester.pumpAndSettle();
+      await action;
+      expect(find.text('莱莎谈起伙伴时感到新鲜。'), findsOneWidget);
+      expect(find.text('伙伴话题的更新译文'), findsOneWidget);
+      expect(find.text('旧译文'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final edit in ['text', 'enabled', 'unchanged']) {
     testWidgets(
       'manual memory result preserves $edit draft and refreshes recent list',

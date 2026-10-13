@@ -116,15 +116,18 @@ void main() {
 
   test('a rejected long-term review leaves recent memory untouched', () async {
     final controller = await makeController();
-    controller.updateMemorySummary(jsonEncode({
-      'entries': [
-        for (var index = 1; index <= 4; index++)
-          {
-            'date': '2026-09-25',
-            'summary': '已确认的重要事实 $index',
-          },
-      ],
-    }));
+    controller.updateMemorySummary(
+      jsonEncode({
+        'entries': [
+          for (var index = 1; index <= 4; index++)
+            {
+              'date': '2026-09-25',
+              'summary': '已确认的重要事实 $index',
+              'translation': 'Previously confirmed fact $index',
+            },
+        ],
+      }),
+    );
     final original = controller.memorySummary;
     controller.addUserMessage('刚刚又谈了一件事');
     final proposal = await ManualMemoryConsolidation().prepare(
@@ -147,4 +150,164 @@ void main() {
     expect(controller.recentMemories, isEmpty);
     expect(controller.memorySummary, original);
   });
+
+  test('a protected old-entry rewrite fails without partially adding recent memory', () async {
+    final controller = await makeController();
+    controller.updateMemorySummary(
+      jsonEncode({
+        'entries': [
+          {
+            'sequence': 1,
+            'summary': '[happy]角色的一句旧原话',
+            'source': 'local_ledger',
+          },
+          {
+            'sequence': 2,
+            'summary': '用户亲自确认的重要约定',
+            'translation': 'A promise confirmed by the user.',
+            'source': 'manual',
+          },
+        ],
+      }),
+    );
+    final original = controller.memorySummary;
+    controller.addUserMessage('今天整理了一些素材');
+    final proposal = await ManualMemoryConsolidation().prepare(
+      controller: controller,
+      complete: (messages) async {
+        final prompt = messages.first['content']!;
+        if (prompt.contains('最近四轮对话')) {
+          return '{"summary":"用户整理了素材"}';
+        }
+        if (prompt.contains('从最近记忆中提炼')) {
+          return '{"entries":[]}';
+        }
+        if (prompt.contains('重新整理旧版本地')) {
+          return '{"entries":[{"sequence":1,"summary":"莱莎回应了用户。","category":"other","importance":1}]}';
+        }
+        return '{"recent":[{"index":0,"translation":"The user sorted materials."}],'
+            '"entries":[{"sequence":1,"translation":"Ryza replied to the user."}]}';
+      },
+    );
+    final entries = proposal!.document['entries'] as List;
+    (entries.last as Map)['summary'] = '未经审阅的旧条目替换';
+    expect(proposal.commit(controller), isFalse);
+    expect(controller.memorySummary, original);
+    expect(controller.recentMemories, isEmpty);
+    expect(controller.lastRecentMemoryMessageId, isNull);
+  });
+
+  test('old local dialogue is repaired only after review, using full source', () async {
+    final controller = await makeController();
+    controller.addUserMessage('你的伙伴都是什么样的人？');
+    controller.addAssistantMessage('莱莎：[happy]タオは本が大好きなんだ。');
+    final sourceId = controller.messages.last.id;
+    controller.updateMemorySummary(
+      jsonEncode({
+        'entries': [
+          {
+            'sequence': 1,
+            'summary': '[happy]タオは本が大好',
+            'source': 'local_ledger',
+            'source_message_id': sourceId,
+            'category': 'relationship_turning_point',
+            'importance': 5,
+          },
+          {
+            'sequence': 2,
+            'summary': '用户手写的约定',
+            'source': 'manual',
+            'translation': 'A manually recorded promise.',
+          },
+        ],
+      }),
+    );
+    controller.appendRecentMemory(
+      '用户询问伙伴性格',
+      lastMessageId: controller.messages.firstWhere((m) => m.isUser).id,
+    );
+    controller.longTermMemoryConsolidatedCount =
+        controller.recentMemories.length;
+    final original = controller.memorySummary;
+    final proposal = await ManualMemoryConsolidation().prepare(
+      controller: controller,
+      complete: (messages) async {
+        final input = jsonDecode(messages.last['content']!) as Map;
+        if (messages.first['content']!.contains('重新整理旧版本地')) {
+          final record = (input['entries'] as List).single as Map;
+          expect(record['source_dialogue'], contains('タオは本が大好きなんだ'));
+          expect(record['source_dialogue'], isNot(contains('[happy]')));
+          return '{"entries":[{"sequence":1,"summary":"莱莎介绍了塔奥爱读书的特点。",'
+              '"category":"other","importance":1}]}';
+        }
+        expect(input['recent'], isEmpty);
+        expect(input['entries'], hasLength(1));
+        return '{"recent":[],"entries":[{"sequence":1,"translation":"Ryza described Tao as a book lover."}]}';
+      },
+    );
+    expect(controller.memorySummary, original);
+    expect(proposal!.repairedEntrySequences, {1});
+    expect(proposal.newEntries.single['summary'], '莱莎介绍了塔奥爱读书的特点。');
+    expect(proposal.commit(controller), isTrue);
+    final saved = MemoryTimeline.decode(controller.memorySummary)!;
+    final entries = saved['entries'] as List;
+    expect(entries[0]['category'], 'other');
+    expect(entries[0]['summary'], '莱莎介绍了塔奥爱读书的特点。');
+    expect(entries[0]['translation'], 'Ryza described Tao as a book lover.');
+    expect(entries[0]['source_message_id'], sourceId);
+    expect(entries[1]['summary'], '用户手写的约定');
+    expect(proposal.commit(controller), isFalse);
+  });
+
+  test('manual missing translations can be filled without new dialogue', () async {
+    final controller = await makeController();
+    controller.updateMemorySummary(
+      jsonEncode({
+        'entries': [
+          {'sequence': 1, 'summary': '用户与莱莎约好去海边', 'source': 'manual'},
+        ],
+      }),
+    );
+    final proposal = await ManualMemoryConsolidation().prepare(
+      controller: controller,
+      complete: (messages) async {
+        expect(messages.first['content'], contains('只翻译'));
+        return '{"recent":[],"entries":[{"sequence":1,"translation":"They agreed to go to the coast."}]}';
+      },
+    );
+    expect(proposal!.repairedEntrySequences, isEmpty);
+    expect(proposal.translationOnlyEntrySequences, {1});
+    expect(proposal.commit(controller), isTrue);
+    final entry =
+        (MemoryTimeline.decode(controller.memorySummary)!['entries'] as List)
+            .single;
+    expect(entry['summary'], '用户与莱莎约好去海边');
+    expect(entry['source'], 'manual');
+    expect(entry['translation'], 'They agreed to go to the coast.');
+  });
+
+  test(
+    'failed legacy repair keeps all memories and checkpoints untouched',
+    () async {
+      final controller = await makeController();
+      controller.updateMemorySummary(
+        jsonEncode({
+          'entries': [
+            {'sequence': 1, 'summary': '角色原话', 'source': 'local_ledger'},
+          ],
+        }),
+      );
+      final original = controller.memorySummary;
+      await expectLater(
+        ManualMemoryConsolidation().prepare(
+          controller: controller,
+          complete: (_) async => '{"entries":[]}',
+        ),
+        throwsFormatException,
+      );
+      expect(controller.memorySummary, original);
+      expect(controller.recentMemories, isEmpty);
+      expect(controller.lastRecentMemoryMessageId, isNull);
+    },
+  );
 }

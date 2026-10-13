@@ -3059,11 +3059,94 @@ $japanesePunctuationRule
     required int expectedEditRevision,
     required int throughRecentMemoryCount,
   }) {
-    if (expectedEditRevision != memoryEditRevision ||
-        throughRecentMemoryCount <= longTermMemoryConsolidatedCount ||
-        throughRecentMemoryCount > recentMemories.length ||
-        MemoryTimeline.decode(value) == null) {
+    final normalized = _prepareConsolidatedMemory(
+      value,
+      expectedEditRevision: expectedEditRevision,
+      throughRecentMemoryCount: throughRecentMemoryCount,
+      availableRecentCount: recentMemories.length,
+    );
+    if (normalized == null) return false;
+    _saveConsolidatedMemory(normalized, throughRecentMemoryCount);
+    _changed();
+    return true;
+  }
+
+  /// Validates the entire reviewed proposal before changing any checkpoint.
+  /// A failed long-term repair cannot consume its recent dialogue batch.
+  bool applyReviewedMemory(
+    String value, {
+    required int expectedEditRevision,
+    required List<({String lastMessageId, String text})> recent,
+    required Set<int> reviewedEntrySequences,
+  }) {
+    if (!longTermMemoryEnabled || expectedEditRevision != memoryEditRevision) {
       return false;
+    }
+    final nextRecent = [...recentMemories];
+    final checkpoints = [..._recentMemoryCheckpoints];
+    var checkpointId = lastRecentMemoryMessageId;
+    var priorIndex = messages.indexWhere(
+      (message) => message.isUser && message.id == checkpointId,
+    );
+    for (final item in recent) {
+      final text = item.text.trim();
+      final index = messages.indexWhere(
+        (message) => message.isUser && message.id == item.lastMessageId,
+      );
+      if (text.isEmpty ||
+          text.length > 1200 ||
+          item.lastMessageId.isEmpty ||
+          item.lastMessageId == checkpointId ||
+          index <= priorIndex) {
+        return false;
+      }
+      final key = text.replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+      final duplicate = nextRecent.reversed
+          .take(16)
+          .any(
+            (existing) =>
+                existing.replaceAll(RegExp(r'\s+'), ' ').toLowerCase() == key,
+          );
+      if (!duplicate) nextRecent.add(text);
+      checkpoints.add({'id': item.lastMessageId, 'added': !duplicate});
+      checkpointId = item.lastMessageId;
+      priorIndex = index;
+    }
+    final normalized = _prepareConsolidatedMemory(
+      value,
+      expectedEditRevision: expectedEditRevision,
+      throughRecentMemoryCount: nextRecent.length,
+      availableRecentCount: nextRecent.length,
+      reviewedEntrySequences: reviewedEntrySequences,
+      isReview: true,
+    );
+    if (normalized == null) return false;
+    recentMemories = nextRecent;
+    _recentMemoryCheckpoints = checkpoints.length > 80
+        ? checkpoints.sublist(checkpoints.length - 80)
+        : checkpoints;
+    lastRecentMemoryMessageId = checkpointId;
+    _saveConsolidatedMemory(normalized, nextRecent.length);
+    memoryEditRevision += 1;
+    _changed();
+    return true;
+  }
+
+  String? _prepareConsolidatedMemory(
+    String value, {
+    required int expectedEditRevision,
+    required int throughRecentMemoryCount,
+    required int availableRecentCount,
+    Set<int> reviewedEntrySequences = const {},
+    bool isReview = false,
+  }) {
+    if (expectedEditRevision != memoryEditRevision ||
+        throughRecentMemoryCount < longTermMemoryConsolidatedCount ||
+        (throughRecentMemoryCount == longTermMemoryConsolidatedCount &&
+            reviewedEntrySequences.isEmpty) ||
+        throughRecentMemoryCount > availableRecentCount ||
+        MemoryTimeline.decode(value) == null) {
+      return null;
     }
     final hasLegacyMemory =
         memorySummary.trim().isNotEmpty &&
@@ -3072,13 +3155,49 @@ $japanesePunctuationRule
     // response may omit older entries; normalizeCandidate restores them from
     // the saved timeline before adding new events, so model omissions cannot
     // delete facts.
-    final normalized = memorySummary.trim().isEmpty
+    var mergeBase = memorySummary;
+    if (isReview) {
+      final previous = MemoryTimeline.decode(
+        MemoryTimeline.normalizeExisting(memorySummary),
+      );
+      final reviewed = MemoryTimeline.decode(
+        MemoryTimeline.normalizeExisting(value),
+      )!;
+      if (previous != null) {
+        final bySequence = {
+          for (final entry in (reviewed['entries'] as List).whereType<Map>())
+            entry['sequence']: entry,
+        };
+        final oldEntries = (previous['entries'] as List).whereType<Map>();
+        // Confirmation can update named entries, never erase an unrelated
+        // fact or rewrite an entry absent from the review card.
+        for (final old in oldEntries) {
+          final next = bySequence[old['sequence']];
+          final oldComparable = Map.of(old);
+          final nextComparable = next == null ? null : Map.of(next);
+          if (old['state_change'] is Map) {
+            oldComparable.remove('status');
+            nextComparable?.remove('status');
+          }
+          if (next == null ||
+              (!reviewedEntrySequences.contains(old['sequence']) &&
+                  jsonEncode(oldComparable) != jsonEncode(nextComparable))) {
+            return null;
+          }
+        }
+        previous['entries'] = [
+          for (final old in oldEntries)
+            reviewedEntrySequences.contains(old['sequence'])
+                ? bySequence[old['sequence']]
+                : old,
+        ];
+        mergeBase = MemoryTimeline.normalizeExisting(jsonEncode(previous));
+      }
+    }
+    final normalized = mergeBase.trim().isEmpty
         ? MemoryTimeline.normalizeExisting(value)
-        : MemoryTimeline.normalizeCandidate(
-            value,
-            previousMemory: memorySummary,
-          );
-    if (normalized == null) return false;
+        : MemoryTimeline.normalizeCandidate(value, previousMemory: mergeBase);
+    if (normalized == null) return null;
     final previousEntries =
         MemoryTimeline.decode(memorySummary)?['entries'] as List? ?? const [];
     final nextEntries =
@@ -3093,8 +3212,15 @@ $japanesePunctuationRule
         (previousEntries.isNotEmpty && nextEntries.isEmpty) ||
         (previousEntries.length >= 4 &&
             nextEntries.length * 2 < previousEntries.length)) {
-      return false;
+      return null;
     }
+    return normalized;
+  }
+
+  void _saveConsolidatedMemory(
+    String normalized,
+    int throughRecentMemoryCount,
+  ) {
     memorySummary = normalized;
     longTermMemoryConsolidatedCount = throughRecentMemoryCount;
     if (recentMemories.length > 64 && longTermMemoryConsolidatedCount > 32) {
@@ -3102,8 +3228,6 @@ $japanesePunctuationRule
       recentMemories = recentMemories.sublist(removed);
       longTermMemoryConsolidatedCount -= removed;
     }
-    _changed();
-    return true;
   }
 
   int suggestionUsesRemaining({DateTime? now}) {

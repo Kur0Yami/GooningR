@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +8,7 @@ import 'package:ryza_chat_mvp/src/app_controller.dart';
 import 'package:ryza_chat_mvp/src/glass_ui.dart';
 import 'package:ryza_chat_mvp/src/settings_detail_page.dart';
 import 'package:ryza_chat_mvp/src/settings_screen.dart';
+import 'package:ryza_chat_mvp/src/memory_timeline.dart';
 
 void main() {
   Future<AppController> setup(WidgetTester tester) async {
@@ -61,11 +64,7 @@ void main() {
     final position = tester.state<ScrollableState>(scrollable).position;
     position.jumpTo(position.minScrollExtent);
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      target,
-      180,
-      scrollable: scrollable,
-    );
+    await tester.scrollUntilVisible(target, 180, scrollable: scrollable);
     await tester.pumpAndSettle();
     await Scrollable.ensureVisible(tester.element(target), alignment: .5);
     await tester.pumpAndSettle();
@@ -241,6 +240,119 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('editing a memory card protects its summary as a manual fact', (
+    tester,
+  ) async {
+    final controller = await setup(tester);
+    controller.configureLongTermMemory(
+      enabled: true,
+      summary: jsonEncode({
+        'entries': [
+          {
+            'summary': '双方约定明天采集素材',
+            'source': 'local_ledger',
+            'local_ledger_version': 2,
+            'category': 'promise',
+          },
+        ],
+      }),
+    );
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('settings-category-data')),
+    );
+    await tapVisible(tester, find.text('长期记忆'));
+    expect(find.text('本地事实记录'), findsOneWidget);
+    await tester.enterText(find.byType(TextFormField).first, '用户修正的采集约定');
+    await tester.tap(find.byKey(const ValueKey('memory-save')));
+    await tester.pumpAndSettle();
+    final entry =
+        (MemoryTimeline.decode(controller.memorySummary)!['entries'] as List)
+                .single
+            as Map;
+    expect(entry['summary'], '用户修正的采集约定');
+    expect(entry['source'], 'manual');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('adding a missing translation preserves the fact provenance', (
+    tester,
+  ) async {
+    final controller = await setup(tester);
+    controller.configureLongTermMemory(
+      enabled: true,
+      summary: jsonEncode({
+        'entries': [
+          {
+            'summary': '明日、工房で会う約束をした',
+            'source': 'local_ledger',
+            'local_ledger_version': 2,
+            'category': 'promise',
+          },
+        ],
+      }),
+    );
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('settings-category-data')),
+    );
+    await tapVisible(tester, find.text('长期记忆'));
+    await tapVisible(tester, find.text('补写译文'));
+    await tester.enterText(find.byType(TextFormField).last, '双方约好明天在工坊见面');
+    await tester.tap(find.byKey(const ValueKey('memory-save')));
+    await tester.pumpAndSettle();
+    final entry =
+        (MemoryTimeline.decode(controller.memorySummary)!['entries'] as List)
+                .single
+            as Map;
+    expect(entry['summary'], '明日、工房で会う約束をした');
+    expect(entry['translation'], '双方约好明天在工坊见面');
+    expect(entry['source'], 'local_ledger');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('raw summary edits stay manual after returning to memory cards', (
+    tester,
+  ) async {
+    final controller = await setup(tester);
+    controller.configureLongTermMemory(
+      enabled: true,
+      summary: jsonEncode({
+        'entries': [
+          {
+            'summary': '双方约定明天采集素材',
+            'source': 'local_ledger',
+            'local_ledger_version': 2,
+            'category': 'promise',
+          },
+        ],
+      }),
+    );
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('settings-category-data')),
+    );
+    await tapVisible(tester, find.text('长期记忆'));
+    await tapVisible(tester, find.text('编辑原始内容'));
+    final edited = jsonDecode(controller.memorySummary) as Map;
+    ((edited['entries'] as List).single as Map)['summary'] =
+        '手动记忆中的[happy]是用户保留的标记';
+    await tester.enterText(find.byType(TextField), jsonEncode(edited));
+    await tapVisible(tester, find.text('记忆卡片'));
+    await tester.tap(find.byKey(const ValueKey('memory-save')));
+    await tester.pumpAndSettle();
+    final entry =
+        (MemoryTimeline.decode(controller.memorySummary)!['entries'] as List)
+                .single
+            as Map;
+    expect(entry['summary'], '手动记忆中的[happy]是用户保留的标记');
+    expect(entry['source'], 'manual');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('manual memory button checks LLM configuration before saving', (
     tester,
   ) async {
@@ -255,7 +367,8 @@ void main() {
     expect(organize, findsOneWidget);
     expect(tester.getRect(organize).right, lessThanOrEqualTo(320));
     expect(
-      tester.getRect(find.byKey(const ValueKey('memory-prompt-editor-open')))
+      tester
+          .getRect(find.byKey(const ValueKey('memory-prompt-editor-open')))
           .right,
       lessThanOrEqualTo(320),
     );

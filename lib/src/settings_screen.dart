@@ -3471,10 +3471,14 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
   _MemoryView _view = _MemoryView.longTerm;
   Map<String, dynamic>? _document;
   List<dynamic>? _entries;
+  int _entryGeneration = 0;
+  final Set<Object> _translationDrafts = {};
   bool _editRaw = false;
+  bool _rawEdited = false;
   bool _manualBusy = false;
 
   void _parseMemory() {
+    _entryGeneration++;
     _document = null;
     _entries = null;
     try {
@@ -3518,6 +3522,52 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
     );
     if (prompt != null) widget.controller.setMemoryConsolidationPrompt(prompt);
   }
+
+  String _savedDraft() {
+    // A raw JSON edit needs the same protection as an edit in a memory card.
+    // Only a changed summary becomes manual; adding a translation alone does
+    // not change the provenance of the fact.
+    if (!_rawEdited) return _summary.text;
+    try {
+      final draft = jsonDecode(_summary.text);
+      final previous = MemoryTimeline.decode(widget.controller.memorySummary);
+      if (draft is! Map || draft['entries'] is! List || previous == null) {
+        return _summary.text;
+      }
+      final previousEntries = {
+        for (final entry in (previous['entries'] as List).whereType<Map>())
+          entry['sequence'] ?? entry['id']: entry,
+      };
+      for (final entry in (draft['entries'] as List).whereType<Map>()) {
+        final old = previousEntries[entry['sequence'] ?? entry['id']];
+        if (old == null || old['summary'] != entry['summary']) {
+          entry['source'] = 'manual';
+        }
+      }
+      return jsonEncode(draft);
+    } on FormatException {
+      return _summary.text;
+    }
+  }
+
+  String _entrySourceLabel(Map entry, AppLanguage language) =>
+      switch (entry['source']) {
+        'local_ledger' => language.text(
+          '本地事实记录',
+          'Locally recorded fact',
+          '端末で記録した事実',
+        ),
+        'manual' => language.text('手动记忆', 'Edited memory', '編集した記憶'),
+        _ when entry['category'] == 'legacy' => language.text(
+          '导入记忆',
+          'Imported memory',
+          '取り込んだ記憶',
+        ),
+        _ => language.text('已整理记忆', 'Organized memory', '整理した記憶'),
+      };
+
+  Object _entryKey(int index) =>
+      _entries![index]['sequence'] ?? _entries![index]['id'] ?? index;
 
   Future<void> _organizeNow() async {
     if (_manualBusy) return;
@@ -3700,6 +3750,24 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
             const SizedBox(height: 12),
             if (_view == _MemoryView.longTerm) ...[
               if (_entries != null && !_editRaw) ...[
+                if (_entries!.whereType<Map>().any(
+                  (entry) =>
+                      entry['source'] == 'local_ledger' &&
+                      (entry['local_ledger_version'] is num
+                              ? (entry['local_ledger_version'] as num).toInt()
+                              : 0) <
+                          2,
+                )) ...[
+                  Text(
+                    language.text(
+                      '部分旧记忆保存的是对话原句。点击“马上整理”可重新提炼，查看并确认后保存。',
+                      'Some older memories contain dialogue excerpts. Use Organize to review and save factual summaries.',
+                      '古い記憶には会話の原文が含まれています。「今すぐ整理」で要約を確認して保存できます。',
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 if (_entries!.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(16),
@@ -3760,9 +3828,23 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
                               ),
                             ],
                           ),
+                          Text(
+                            _entrySourceLabel(
+                              _entries![index] as Map,
+                              language,
+                            ),
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                          ),
                           const SizedBox(height: 8),
                           TextFormField(
-                            key: ObjectKey(_entries![index]),
+                            key: ValueKey(
+                              'memory-entry-${_entryKey(index)}-$_entryGeneration',
+                            ),
                             initialValue: _entries![index]['summary'] as String,
                             minLines: 1,
                             maxLines: null,
@@ -3777,17 +3859,23 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
                             ),
                             onChanged: (value) {
                               _entries![index]['summary'] = value;
+                              _entries![index]['source'] = 'manual';
                               _summary.text = jsonEncode(_document);
                             },
                           ),
-                          if (_entries![index]['translation'] is String) ...[
+                          if (_entries![index]['translation'] is String ||
+                              _translationDrafts.contains(
+                                _entryKey(index),
+                              )) ...[
                             const SizedBox(height: 6),
                             TextFormField(
                               key: ValueKey(
-                                'memory-entry-translation-${_entries![index]['sequence']}',
+                                'memory-entry-translation-${_entryKey(index)}-$_entryGeneration',
                               ),
                               initialValue:
-                                  _entries![index]['translation'] as String,
+                                  _entries![index]['translation'] is String
+                                  ? _entries![index]['translation'] as String
+                                  : '',
                               minLines: 1,
                               maxLines: null,
                               decoration: InputDecoration(
@@ -3804,7 +3892,23 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
                                 _summary.text = jsonEncode(_document);
                               },
                             ),
-                          ],
+                          ] else
+                            TextButton.icon(
+                              key: ValueKey(
+                                'memory-add-translation-${_entryKey(index)}',
+                              ),
+                              onPressed: () => setState(() {
+                                _translationDrafts.add(_entryKey(index));
+                              }),
+                              icon: const Icon(Icons.translate, size: 18),
+                              label: Text(
+                                language.text(
+                                  '补写译文',
+                                  'Add translation',
+                                  '翻訳を追加',
+                                ),
+                              ),
+                            ),
                           if (_entries![index]['state_change'] is Map) ...[
                             const SizedBox(height: 6),
                             Text(
@@ -3831,6 +3935,7 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
               ] else
                 TextField(
                   controller: _summary,
+                  onChanged: (_) => _rawEdited = true,
                   minLines: 7,
                   maxLines: 12,
                   decoration: InputDecoration(
@@ -3880,9 +3985,10 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
           child: Text(language.text('取消', 'Cancel', 'キャンセル')),
         ),
         FilledButton(
+          key: const ValueKey('memory-save'),
           onPressed: () => Navigator.pop(
             context,
-            _LongTermMemoryDraft(enabled: _enabled, summary: _summary.text),
+            _LongTermMemoryDraft(enabled: _enabled, summary: _savedDraft()),
           ),
           child: Text(language.text('保存', 'Save', '保存')),
         ),
@@ -4031,7 +4137,11 @@ class _ManualMemoryReviewDialogState extends State<_ManualMemoryReviewDialog> {
                 ],
               ],
               Text(
-                language.text('长期记忆', 'Long-term memories', '長期記憶'),
+                language.text(
+                  '待确认长期记忆',
+                  'Long-term memories to review',
+                  '確認する長期記憶',
+                ),
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: 8),
@@ -4044,6 +4154,22 @@ class _ManualMemoryReviewDialogState extends State<_ManualMemoryReviewDialog> {
                   ),
                 ),
               for (final entry in proposal.newEntries) ...[
+                if (proposal.repairedEntrySequences.contains(entry['sequence']))
+                  Text(
+                    language.text(
+                      '重新整理旧记忆',
+                      'Reorganized old memory',
+                      '古い記憶を再整理',
+                    ),
+                    style: Theme.of(context).textTheme.labelMedium,
+                  )
+                else if (proposal.translationOnlyEntrySequences.contains(
+                  entry['sequence'],
+                ))
+                  Text(
+                    language.text('补充译文', 'Added translation', '翻訳を追加'),
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
                 Row(
                   children: [
                     Expanded(
@@ -4073,7 +4199,10 @@ class _ManualMemoryReviewDialogState extends State<_ManualMemoryReviewDialog> {
                     labelText: language.text('记忆内容', 'Memory', '記憶の内容'),
                     border: const OutlineInputBorder(),
                   ),
-                  onChanged: (value) => entry['summary'] = value,
+                  onChanged: (value) {
+                    entry['summary'] = value;
+                    entry['source'] = 'manual';
+                  },
                 ),
                 const SizedBox(height: 8),
                 TextFormField(

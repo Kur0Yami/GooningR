@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'memory_text.dart';
 import 'memory_timeline.dart';
 
 /// A small, deterministic memory layer inspired by Horae's append-only
@@ -33,6 +34,7 @@ class MemoryLedgerFact {
     'summary': summary,
     'keywords': keywords,
     'source': 'local_ledger',
+    'local_ledger_version': 2,
     'source_role': sourceRole,
     'source_message_id': sourceMessageId,
     'observed_at': observedAt.toIso8601String(),
@@ -48,19 +50,13 @@ class MemoryLedgerFact {
 class MemoryLedger {
   MemoryLedger._();
 
-  static const _sentenceBoundary = r'[。！？!?；;\n]+';
-  // Reasoning/tool blocks are implementation details and must never become
-  // facts. Answer/code tags are stripped while their body is retained.
-  static final _hiddenBlocks = RegExp(
-    r'<(?:think|tool_call|function_call|horae|horaeevent)\b[^>]*>[\s\S]*?</(?:think|tool_call|function_call|horae|horaeevent)>',
+  static final _sentences = RegExp(r'[^。！？!?；;\n]+[。！？!?；;]?');
+  static final _speakerPrefix = RegExp(
+    r'^\s*(莱莎|莱沙|ライザ|苏菲|蘇菲|ソフィー|ryza|sophie|角色\s*\[\s*[^\]\r\n]+\s*\])\s*[：:]\s*',
     caseSensitive: false,
   );
-  static final _unclosedHiddenBlock = RegExp(
-    r'<(?:think|tool_call|function_call|horae|horaeevent)\b[^>]*>[\s\S]*$',
-    caseSensitive: false,
-  );
-  static final _stripMarkup = RegExp(
-    r'<\/?(?:answer|code)\b[^>]*>|<[^>]+>|\[/?(?:think|answer|code|tool_call|function_call)[^\]]*\]',
+  static final _narratorPrefix = RegExp(
+    r'^\s*(?:旁白|narrator)\s*[：:]',
     caseSensitive: false,
   );
   static final _latinToken = RegExp(
@@ -99,53 +95,102 @@ class MemoryLedger {
   }) {
     final observedAt = now ?? DateTime.now();
     if (sourceMessageId.trim().isEmpty) return const [];
-    final sentences = <({String text, String role})>[];
+    final sentences = <({String text, String role, String actor})>[];
     for (final (text, role) in <(String, String)>[
       (userText, 'user'),
       (assistantText, 'assistant'),
     ]) {
       final source = _clean(text);
       if (source.isEmpty) continue;
-      for (final sentence
-          in source
-              .split(RegExp(_sentenceBoundary))
-              .map(_clean)
-              .where((value) => value.length >= 4)) {
-        sentences.add((text: sentence, role: role));
+      for (final line in source.split('\n')) {
+        // A colon is ordinary content unless an assistant line explicitly
+        // names a supported speaker. User assertions must retain their prefix.
+        final prefix = role == 'assistant'
+            ? _speakerPrefix.firstMatch(line)
+            : null;
+        final actor = role == 'user'
+            ? '用户'
+            : _narratorPrefix.hasMatch(line)
+            ? ''
+            : prefix?.group(1)?.trim() ?? '角色';
+        final body = prefix == null ? line : line.substring(prefix.end);
+        for (final match in _sentences.allMatches(body)) {
+          final raw = match.group(0)!.trim();
+          if (RegExp(r'[?？]$').hasMatch(raw)) continue;
+          final sentence = _clean(raw.replaceFirst(RegExp(r'[。！!；;]$'), ''));
+          if (sentence.length >= 4) {
+            sentences.add((text: sentence, role: role, actor: actor));
+          }
+        }
       }
     }
     if (sentences.isEmpty) return const [];
 
     final facts = <MemoryLedgerFact>[];
-    final seen = <String>{};
-    void add(String category, RegExp signal, {int importance = 3}) {
+    final seen = <String, int>{};
+    void add(
+      String category,
+      RegExp signal, {
+      int importance = 3,
+      String? onlyRole,
+    }) {
       for (final sentence in sentences) {
+        if (onlyRole != null && sentence.role != onlyRole) continue;
         if (!signal.hasMatch(sentence.text)) continue;
+        // A question or an unaccepted request is not a completed event.
+        if (RegExp(
+          r'(?:吗|呢)$|能否|能不能|可以不可以|要不要|もし|でしょうか|ですか|ませんか|would you|could you|can you',
+          caseSensitive: false,
+        ).hasMatch(sentence.text)) {
+          continue;
+        }
+        if (category != 'user_preference' &&
+            RegExp(
+              r'如果|假如|要是|希望|想要|打算|计划|^(?:请|帮我|给我)|\b(?:if|wish|want to|please)\b',
+              caseSensitive: false,
+            ).hasMatch(sentence.text)) {
+          continue;
+        }
         final keywords = _keywords(sentence.text)
             .take(8)
             .toList(growable: false);
         if (keywords.isEmpty) continue;
-        final summary = _bounded(sentence.text, 140);
-        final key = '$category|${_comparable(summary)}';
-        if (!seen.add(key)) continue;
-        facts.add(
-          MemoryLedgerFact(
-            category: category,
-            summary: summary,
-            keywords: keywords,
-            importance: importance,
-            sourceMessageId: sourceMessageId,
-            sourceRole: sentence.role,
-            observedAt: observedAt,
-          ),
+        final summary = _factSummary(
+          sentence.text,
+          actor: sentence.actor,
+          category: category,
         );
+        // Preserve a complete assertion. A half sentence changes its meaning;
+        // oversized dialogue is left for the model-backed recent summary.
+        if (summary.runes.length > 400) continue;
+        final key = '${sentence.role}|${_comparable(sentence.text)}';
+        final existingIndex = seen[key];
+        if (existingIndex != null &&
+            facts[existingIndex].importance >= importance) {
+          continue;
+        }
+        final fact = MemoryLedgerFact(
+          category: category,
+          summary: summary,
+          keywords: keywords,
+          importance: importance,
+          sourceMessageId: sourceMessageId,
+          sourceRole: sentence.role,
+          observedAt: observedAt,
+        );
+        if (existingIndex == null) {
+          seen[key] = facts.length;
+          facts.add(fact);
+        } else {
+          facts[existingIndex] = fact;
+        }
       }
     }
 
     add(
       'promise',
       RegExp(
-        r'约定|答应|承诺|约好|计划|明天|下次|之后一起|一定会|promise|agree|tomorrow|next time|約束|約束した|明日|次は',
+        r'约定|答应|承诺|约好|之后一起|一定会|明天.{0,16}(?:一起|出发)|下次.{0,16}一起|\bpromise\b|\bagreed?\b|tomorrow.{0,24}together|約束|明日.{0,16}(?:一緒|出発)',
         caseSensitive: false,
       ),
       importance: 5,
@@ -160,14 +205,14 @@ class MemoryLedger {
     add(
       'scene',
       RegExp(
-        r'到达|去了|前往|来到|回到|离开|抵达|在.{0,16}(?:森林|工坊|海岸|岛|村|城|湖|旅馆|街道|海边)|arrive|went to|leave|location|到着|向かう',
+        r'到达|去了|前往|来到|回到|离开|抵达|arrive|went to|leave|到着|向かう',
         caseSensitive: false,
       ),
     );
     add(
       'relationship_turning_point',
       RegExp(
-        r'成为朋友|关系|喜欢你|爱你|讨厌|生气|和好|原谅|告白|背叛|分手|结婚|朋友了|love you|confess|betray|break up|marry|友達|好き|仲直り|告白',
+        r'成为朋友|确认.{0,8}关系|喜欢你|爱你|和好|原谅|告白|背叛|分手|结婚|朋友了|love you|confess|betray|break up|marry|友達にな|(?:あなた|君|お前).{0,8}(?:が|のことが)好き|仲直り|告白',
         caseSensitive: false,
       ),
       importance: 5,
@@ -175,19 +220,15 @@ class MemoryLedger {
     add(
       'user_preference',
       RegExp(
-        r'我喜欢|我讨厌|我希望|请不要|不要叫我|叫我|我的名字是|i like|i hate|please don.t|call me|私の名前は',
+        r'我喜欢|我讨厌|我希望|请不要|不要叫我|叫我|我的名字是|i like|i hate|please don.t|call me|私の名前は|(?:私|わたし|僕|ぼく|俺).{0,16}(?:が好き|大好き|が嫌い)',
         caseSensitive: false,
       ),
       importance: 4,
+      onlyRole: 'user',
     );
-    add(
-      'mood',
-      RegExp(
-        r'开心|高兴|难过|伤心|生气|害怕|兴奋|担心|失落|happy|sad|angry|afraid|excited|worried|嬉しい|悲しい|怒って|心配',
-        caseSensitive: false,
-      ),
-      importance: 2,
-    );
+    // Delivery tags and transient emotions belong to the recent context.
+    // The model may retain an emotional event when its lasting cause/result
+    // is explicit; a keyword alone cannot establish a long-term event.
     return facts;
   }
 
@@ -213,10 +254,7 @@ class MemoryLedger {
   }
 
   static String _clean(String value) {
-    final withoutMarkup = value
-        .replaceAll(_hiddenBlocks, ' ')
-        .replaceAll(_unclosedHiddenBlock, ' ')
-        .replaceAll(_stripMarkup, ' ')
+    return cleanMemoryText(value, preserveLines: true)
         .split('\n')
         .where(
           (line) => !RegExp(
@@ -224,10 +262,30 @@ class MemoryLedger {
             caseSensitive: false,
           ).hasMatch(line),
         )
-        .join(' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
+        .join('\n')
         .trim();
-    return withoutMarkup;
+  }
+
+  static String _factSummary(
+    String text, {
+    required String actor,
+    required String category,
+  }) {
+    var assertion = text.replaceFirst(RegExp(r'^(?:好(?:的)?|嗯|是的)[，,、]\s*'), '');
+    if (actor.isNotEmpty && assertion.startsWith('我们')) {
+      assertion = '用户与角色${assertion.substring(2)}';
+    } else if (actor.isNotEmpty && assertion.startsWith('我')) {
+      assertion = '$actor${assertion.substring(1)}';
+    }
+    final label = switch (category) {
+      'promise' => '确认约定',
+      'item' => '确认物品变化',
+      'scene' => '确认地点变化',
+      'relationship_turning_point' => '确认关系变化',
+      'user_preference' => '表达偏好',
+      _ => '确认事实',
+    };
+    return '$actor$label：$assertion。';
   }
 
   static Iterable<String> _keywords(String value) sync* {
@@ -249,9 +307,6 @@ class MemoryLedger {
       }
     }
   }
-
-  static String _bounded(String value, int maxChars) =>
-      String.fromCharCodes(value.runes.take(maxChars));
 
   static String _comparable(String value) => value.toLowerCase().replaceAll(
     RegExp(r'[\s\p{P}\p{S}]', unicode: true),

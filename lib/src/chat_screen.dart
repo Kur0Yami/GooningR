@@ -5329,6 +5329,7 @@ class _ChatScreenState extends State<ChatScreen> {
             .consolidate(
               dialogue: dialogue,
               now: DateTime.now(),
+              summaryLanguage: widget.controller.interfaceLanguage,
               complete: (messages) => _aiClient.complete(
                 lightweight: true,
                 provider: provider,
@@ -5408,6 +5409,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   recentMemories: recentBatch,
                   promptOverride: controller.memoryConsolidationPrompt,
                   now: DateTime.now(),
+                  summaryLanguage: controller.interfaceLanguage,
                   complete: (messages) => _aiClient.complete(
                     lightweight: true,
                     provider: provider,

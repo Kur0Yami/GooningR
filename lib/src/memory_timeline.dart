@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'memory_text.dart';
+
 class MemoryTimeline {
   static const schemaVersion = 2;
   static final _summarySeparators = RegExp(r'[\s\p{P}\p{S}]', unicode: true);
@@ -81,9 +83,7 @@ class MemoryTimeline {
         entry['sequence'] as int: Map<String, dynamic>.from(entry),
     };
     for (final raw in document['entries'] as List) {
-      if (raw is! Map) continue;
-      final summary = '${raw['summary'] ?? ''}'.trim();
-      if (summary.isEmpty) continue;
+      if (raw is! Map) return null;
       Map<String, dynamic>? previousEntry;
       final sequence = raw['sequence'];
       if (sequence is int) previousEntry = bySequence[sequence];
@@ -94,13 +94,16 @@ class MemoryTimeline {
       if (sequence is int && sequence > 0 && sequence <= previousLastSequence) {
         continue;
       }
+      if (raw['summary'] is! String) return null;
       final normalized = _normalizeEntry(
         raw,
         sequence: nextSequence + 1,
         fallbackDate: today,
         capSummary: true,
       );
-      if (normalized == null) continue;
+      // A malformed/new oversized entry is a failed batch, not proof that
+      // there is nothing to remember. Let the caller keep its retry cursor.
+      if (normalized == null) return null;
       if (_isDuplicateEvent(result.values, normalized)) continue;
       result[++nextSequence] = normalized;
     }
@@ -257,7 +260,15 @@ class MemoryTimeline {
     final category = '${raw['category'] ?? 'other'}'.trim();
     final rawSummary = '${raw['summary'] ?? ''}';
     if (rawSummary.trim().isEmpty) return null;
-    final summary = category == 'legacy' ? rawSummary : rawSummary.trim();
+    final cleanAutomaticText = capSummary || raw['source'] == 'local_ledger';
+    final summary = category == 'legacy'
+        ? rawSummary
+        : cleanAutomaticText
+        ? cleanMemoryText(rawSummary)
+        : rawSummary.trim();
+    if (summary.trim().isEmpty || (capSummary && summary.runes.length > 400)) {
+      return null;
+    }
     final baseImportance = ((raw['importance'] as num?)?.toInt() ?? 1).clamp(
       1,
       5,
@@ -281,12 +292,20 @@ class MemoryTimeline {
     final quotes =
         (raw['key_quotes'] is List ? raw['key_quotes'] as List : const [])
             .whereType<String>()
-            .map((quote) => _take(quote.trim(), 100))
+            .map(
+              (quote) => _take(
+                cleanAutomaticText ? cleanMemoryText(quote) : quote.trim(),
+                100,
+              ),
+            )
             .where((quote) => quote.isNotEmpty)
             .take(2)
             .toList();
-    final normalizedStatus = '${raw['status'] ?? 'active'}'.trim().toLowerCase();
-    final status = normalizedStatus.isEmpty ||
+    final normalizedStatus = '${raw['status'] ?? 'active'}'
+        .trim()
+        .toLowerCase();
+    final status =
+        normalizedStatus.isEmpty ||
             normalizedStatus == 'null' ||
             normalizedStatus == 'none' ||
             normalizedStatus == 'nil'
@@ -299,10 +318,12 @@ class MemoryTimeline {
           : (date == null ? fallbackDate : _dateOnly(date)),
       'category': category.isEmpty ? 'other' : category,
       'importance': importance,
-      'summary': capSummary ? _take(summary, 50) : summary,
+      // The model is asked for a concise summary. Retain its complete result
+      // rather than cutting the tail of a Japanese clause or factual result.
+      'summary': summary,
       if ('${raw['translation'] ?? ''}'.trim().isNotEmpty)
-        'translation': capSummary
-            ? _take('${raw['translation']}'.trim(), 300)
+        'translation': cleanAutomaticText
+            ? cleanMemoryText('${raw['translation']}')
             : '${raw['translation']}'.trim(),
       'status': status,
       'keywords': (raw['keywords'] is List ? raw['keywords'] as List : const [])
@@ -313,6 +334,8 @@ class MemoryTimeline {
           .toList(),
       if ('${raw['source'] ?? ''}'.trim().isNotEmpty)
         'source': _take('${raw['source']}'.trim(), 32),
+      if (raw['local_ledger_version'] is int)
+        'local_ledger_version': raw['local_ledger_version'],
       if ('${raw['source_message_id'] ?? ''}'.trim().isNotEmpty)
         'source_message_id': _take('${raw['source_message_id']}'.trim(), 96),
       if ('${raw['source_role'] ?? ''}'.trim().isNotEmpty)

@@ -331,7 +331,10 @@ class VirtualPhoneLauncher extends StatelessWidget {
       barrierColor: Colors.black.withValues(alpha: .72),
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (dialogContext, animation, secondaryAnimation) => SafeArea(
-        child: Center(
+        left: false,
+        right: false,
+        bottom: false,
+        child: SizedBox.expand(
           child: _VirtualPhoneCard(
             language: language,
             liquidGlass: liquidGlass,
@@ -629,129 +632,150 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final size = media.size;
-    final phoneWidth = size.width.clamp(0.0, 390.0).toDouble();
-    final availableHeight = size.height - media.viewPadding.vertical;
-    final phoneHeight = availableHeight.clamp(0.0, 760.0).toDouble();
-    final dragFraction = phoneHeight <= 0 ? 0.0 : _dragOffset / phoneHeight;
-    return NavigatorPopHandler<Object?>(
-      onPopWithResult: (_) => _navigatorKey.currentState?.maybePop(),
-      child: AnimatedSlide(
-        offset: Offset(0, dragFraction),
-        duration: _dragging ? Duration.zero : const Duration(milliseconds: 240),
-        curve: Curves.easeOutCubic,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            key: const ValueKey('virtual-phone-screen'),
-            width: phoneWidth,
-            height: phoneHeight,
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(42),
-              border: Border.all(color: Colors.white.withValues(alpha: .35)),
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black87,
-                  blurRadius: 34,
-                  spreadRadius: 2,
-                  offset: Offset(0, 18),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(42),
-              child: MediaQuery(
-                data: media.copyWith(
-                  size: Size(phoneWidth, phoneHeight),
-                  padding: EdgeInsets.zero,
-                  viewPadding: EdgeInsets.zero,
-                ),
-                child: Theme(
-                  data: Theme.of(context).copyWith(
-                    appBarTheme: Theme.of(context).appBarTheme
-                        .copyWith(toolbarHeight: 56),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final media = MediaQuery.of(context);
+      final phoneWidth = constraints.maxWidth;
+      final phoneHeight = constraints.maxHeight;
+      const phoneRadius = BorderRadius.vertical(top: Radius.circular(42));
+      final dragFraction = phoneHeight <= 0 ? 0.0 : _dragOffset / phoneHeight;
+      return NavigatorPopHandler<Object?>(
+        onPopWithResult: (_) => _navigatorKey.currentState?.maybePop(),
+        child: AnimatedSlide(
+          offset: Offset(0, dragFraction),
+          duration: _dragging
+              ? Duration.zero
+              : const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              key: const ValueKey('virtual-phone-screen'),
+              width: phoneWidth,
+              height: phoneHeight,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: phoneRadius,
+                border: Border.all(color: Colors.white.withValues(alpha: .35)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black87,
+                    blurRadius: 34,
+                    spreadRadius: 2,
+                    offset: Offset(0, 18),
                   ),
-                  child: GlassStyleScope(
-                    enabled: GlassStyleScope.resolve(
-                      context,
-                      fallback: _liquidGlass,
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: phoneRadius,
+                child: MediaQuery(
+                  data: media.copyWith(
+                    size: Size(phoneWidth, phoneHeight),
+                    // The outer route consumes only the top safe area. Keep the
+                    // other device insets for content while wallpaper reaches
+                    // the sides and bottom of the actual screen.
+                    padding: media.padding.copyWith(top: 0),
+                    viewPadding: media.viewPadding.copyWith(top: 0),
+                  ),
+                  child: Theme(
+                    data: Theme.of(context).copyWith(
+                      appBarTheme: Theme.of(context).appBarTheme
+                          .copyWith(toolbarHeight: 56),
                     ),
-                    child: VirtualPhoneScope(
-                      goHome: _goHome,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          _buildLiveWallpaper(),
-                          Column(
-                            children: [
-                              _buildLiveStatusBar(),
-                              Expanded(
-                                child: LayoutBuilder(
-                                  builder: (context, constraints) => MediaQuery(
-                                    data: MediaQuery.of(context)
-                                        .copyWith(size: constraints.biggest),
-                                    child: ScaffoldMessenger(
-                                      child: Navigator(
-                                        key: _navigatorKey,
-                                        observers: [_navigationObserver],
-                                        onGenerateRoute: (_) =>
-                                            PageRouteBuilder<void>(
-                                              settings: const RouteSettings(
-                                                name: '/virtual-phone',
-                                              ),
-                                              transitionDuration: Duration.zero,
-                                              maintainState: true,
-                                              pageBuilder: (context, _, _) =>
-                                                  _buildLiveHome(context),
-                                              transitionsBuilder:
-                                                  (
+                    child: GlassStyleScope(
+                      enabled: GlassStyleScope.resolve(
+                        context,
+                        fallback: _liquidGlass,
+                      ),
+                      child: VirtualPhoneScope(
+                        goHome: _goHome,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            _buildLiveWallpaper(),
+                            SafeArea(
+                              top: false,
+                              child: Column(
+                                children: [
+                                  _buildLiveStatusBar(),
+                                  Expanded(
+                                    child: LayoutBuilder(
+                                      builder: (context, constraints) => MediaQuery(
+                                        data: MediaQuery.of(
+                                          context,
+                                        ).copyWith(size: constraints.biggest),
+                                        child: ScaffoldMessenger(
+                                          child: Navigator(
+                                            key: _navigatorKey,
+                                            observers: [_navigationObserver],
+                                            onGenerateRoute: (_) =>
+                                                PageRouteBuilder<void>(
+                                                  settings: const RouteSettings(
+                                                    name: '/virtual-phone',
+                                                  ),
+                                                  transitionDuration:
+                                                      Duration.zero,
+                                                  maintainState: true,
+                                                  pageBuilder: (
                                                     context,
                                                     _,
-                                                    secondaryAnimation,
-                                                    child,
-                                                  ) {
-                                                    if (MediaQuery.disableAnimationsOf(
-                                                      context,
-                                                    )) {
-                                                      return child;
-                                                    }
-                                                    final progress =
-                                                        secondaryAnimation.drive(
-                                                          CurveTween(
-                                                            curve: Curves
-                                                                .easeOutCubic,
-                                                          ),
+                                                    _,
+                                                  ) => _buildLiveHome(context),
+                                                  transitionsBuilder:
+                                                      (
+                                                        context,
+                                                        _,
+                                                        secondaryAnimation,
+                                                        child,
+                                                      ) {
+                                                        if (MediaQuery.disableAnimationsOf(
+                                                          context,
+                                                        )) {
+                                                          return child;
+                                                        }
+                                                        final progress =
+                                                            secondaryAnimation.drive(
+                                                              CurveTween(
+                                                                curve: Curves
+                                                                    .easeOutCubic,
+                                                              ),
+                                                            );
+                                                        return FadeTransition(
+                                                          opacity: progress
+                                                              .drive(
+                                                                Tween<double>(
+                                                                  begin: 1,
+                                                                  end: .88,
+                                                                ),
+                                                              ),
+                                                          child:
+                                                              ScaleTransition(
+                                                                scale: progress
+                                                                    .drive(
+                                                                      Tween<
+                                                                        double
+                                                                      >(
+                                                                        begin:
+                                                                            1,
+                                                                        end:
+                                                                            .97,
+                                                                      ),
+                                                                    ),
+                                                                child: child,
+                                                              ),
                                                         );
-                                                    return FadeTransition(
-                                                      opacity: progress.drive(
-                                                        Tween<double>(
-                                                          begin: 1,
-                                                          end: .88,
-                                                        ),
-                                                      ),
-                                                      child: ScaleTransition(
-                                                        scale: progress.drive(
-                                                          Tween<double>(
-                                                            begin: 1,
-                                                            end: .97,
-                                                          ),
-                                                        ),
-                                                        child: child,
-                                                      ),
-                                                    );
-                                                  },
-                                            ),
+                                                      },
+                                                ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
+                                ],
                               ),
-                            ],
-                          ),
-                        ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -760,9 +784,9 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
             ),
           ),
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
 
   Widget _buildLiveWallpaper() {
     final wallpapers = widget.wallpapers;
@@ -836,12 +860,18 @@ class _VirtualPhoneCardState extends State<_VirtualPhoneCard> {
           );
   }
 
-  Widget _buildLiveStatusBar() => AnimatedBuilder(
-    animation: Listenable.merge([
-      _homeVisible,
-      if (widget.updates != null) widget.updates!,
-    ]),
-    builder: (context, _) => _buildStatusBar(context),
+  Widget _buildLiveStatusBar() => LayoutBuilder(
+    builder: (context, constraints) => MediaQuery(
+      data: MediaQuery.of(context)
+          .copyWith(size: Size(constraints.maxWidth, 44)),
+      child: AnimatedBuilder(
+        animation: Listenable.merge([
+          _homeVisible,
+          if (widget.updates != null) widget.updates!,
+        ]),
+        builder: (context, _) => _buildStatusBar(context),
+      ),
+    ),
   );
 
   Widget _buildStatusBar(BuildContext context) {

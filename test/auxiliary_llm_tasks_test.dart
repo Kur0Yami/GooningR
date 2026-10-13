@@ -333,6 +333,50 @@ void main() {
     expect(result, contains('约定明天去森林'));
   });
 
+  test(
+    'memory summaries strip performance cues and specify display language',
+    () async {
+      final recent = await RecentMemoryConsolidator().consolidate(
+        dialogue: '莱莎：[happy]明日、一緒に行こう。[emphasis]',
+        now: DateTime(2026, 10, 13),
+        complete: (messages) async {
+          expect(messages.first['content'], contains('摘要语言：Chinese'));
+          expect(messages.last['content'], isNot(contains('[happy]')));
+          expect(messages.last['content'], isNot(contains('[emphasis]')));
+          return '{"summary":"[happy]双方约定明天一起出发。[emphasis]"}';
+        },
+      );
+      expect(recent, '双方约定明天一起出发。');
+      final memory = await MemoryConsolidator().consolidate(
+        previousMemory: '',
+        recentMemories: ['[happy]双方约定明天出发'],
+        promptOverride: '用户偏好的整理规则',
+        now: DateTime(2026, 10, 13),
+        complete: (messages) async {
+          expect(messages.first['content'], contains('用户偏好的整理规则'));
+          expect(messages.first['content'], contains('摘要语言：Chinese'));
+          expect(messages.last['content'], isNot(contains('[happy]')));
+          return '{"entries":[{"summary":"[happy]双方约定明天出发"}]}';
+        },
+      );
+      expect(memory, contains('双方约定明天出发'));
+      expect(memory, isNot(contains('[happy]')));
+    },
+  );
+
+  test(
+    'oversized recent output is rejected instead of cut mid sentence',
+    () async {
+      final result = await RecentMemoryConsolidator().consolidate(
+        dialogue: '我们讨论了远行。',
+        now: DateTime(2026, 10, 13),
+        complete: (_) async =>
+            jsonEncode({'summary': List.filled(410, '远').join()}),
+      );
+      expect(result, isNull);
+    },
+  );
+
   test('long-term memory passes the requested completion budget', () async {
     int? observedBudget;
     final result = await MemoryConsolidator().consolidate(
