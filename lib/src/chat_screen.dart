@@ -683,6 +683,9 @@ class _ChatScreenState extends State<ChatScreen> {
     late final SpineWidgetController spineController;
     spineController = SpineWidgetController(
       onBeforeUpdateWorldTransforms: (controller) {
+        // Lip-sync must sample the envelope every frame. It used to run in
+        // onBeforeApplyAnimation, which spine_flutter 4.2.36 does not have.
+        _prepareSpeechFrame(controller);
         _applySpeakingHeadMotion(controller);
         _restoreProceduralRig(controller);
       },
