@@ -71,6 +71,11 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
   shared_preferences_platform_interface: any
+# permission_handler_android 14.x needs compileSdk 37, which CI does not have.
+# Pin to 13.0.1, the last release that builds with compileSdk 35.
+dependency_overrides:
+  permission_handler_android: 13.0.1
+
 flutter:
 
   # The following line ensures that the Material Icons font is
