@@ -131,6 +131,7 @@ class SkeletonData {
 
 class Atlas {
   Atlas();
+  static FilterQuality filterQuality = FilterQuality.low;
 
   static Future<Atlas> fromAsset(
     String atlasFile, {
@@ -193,6 +194,7 @@ class SpineWidgetController {
     this.onInitialized,
     this.onBeforeUpdateWorldTransforms,
     this.onAfterUpdateWorldTransforms,
+    this.onBeforeApplyAnimation,
     this.onAfterApplyAnimation,
     this.onBeforePaint,
     this.onAfterPaint,
@@ -205,6 +207,7 @@ class SpineWidgetController {
   onBeforeUpdateWorldTransforms;
   final void Function(SpineWidgetController controller)?
   onAfterUpdateWorldTransforms;
+  final void Function(SpineWidgetController controller)? onBeforeApplyAnimation;
   final void Function(SpineWidgetController controller)? onAfterApplyAnimation;
   final void Function(SpineWidgetController controller, Canvas canvas)?
   onBeforePaint;
