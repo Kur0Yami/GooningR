@@ -54,11 +54,25 @@ class BoundingBoxAttachment extends VertexAttachment {
 
 class Slot {
   const Slot();
+  SlotData getData() => const SlotData();
   Attachment? getAttachment() => null;
+}
+
+class Vector2 {
+  const Vector2(this.x, this.y);
+  final double x;
+  final double y;
 }
 
 class BoneData {
   const BoneData();
+  String getName() => '';
+  double getX() => 0;
+  double getY() => 0;
+}
+
+class SlotData {
+  const SlotData();
   String getName() => '';
 }
 
@@ -72,6 +86,8 @@ class Bone {
   void setY(double value) {}
   double getWorldX() => 0;
   double getWorldY() => 0;
+  Vector2 worldToLocal(double worldX, double worldY) =>
+      Vector2(worldX, worldY);
   double getRotation() => 0;
   void setRotation(double value) {}
   void setScaleY(double value) {}
