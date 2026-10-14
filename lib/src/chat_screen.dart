@@ -182,6 +182,9 @@ double conversationPanelFractionForText({
   return (targetHeight / availableHeight).clamp(0.22, 0.68);
 }
 
+/// Fixed Spine update step (spine_flutter 4.2.36 has no SpineWidgetController.updateDelta).
+const double kSpineFrameDelta = 1 / 60;
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     this.pageActive = true,
@@ -647,8 +650,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _spineController = _createSpineController(_appearance);
     }
     _seatObjectController = SpineWidgetController(
-      targetFramesPerSecond:
-          widget.controller.frameRate.effectiveFramesPerSecond,
       onInitialized: (controller) {
         // The object has no gameplay animation; keep its setup pose.
         controller.animationState.getData().setDefaultMix(0.2);
@@ -681,13 +682,10 @@ class _ChatScreenState extends State<ChatScreen> {
   SpineWidgetController _createSpineController(CharacterAppearance appearance) {
     late final SpineWidgetController spineController;
     spineController = SpineWidgetController(
-      targetFramesPerSecond:
-          widget.controller.frameRate.effectiveFramesPerSecond,
-      onBeforeUpdateWorldTransforms: _restoreProceduralRig,
-      onBeforeApplyAnimation: _prepareSpeechFrame,
-      onAfterApplyAnimation: _applySpeakingHeadMotion,
-      maxDeltaTime: 0.05,
-      paintOverflow: const EdgeInsets.only(top: 160),
+      onBeforeUpdateWorldTransforms: (controller) {
+        _applySpeakingHeadMotion(controller);
+        _restoreProceduralRig(controller);
+      },
       onInitialized: (controller) {
         // fromDrawable initializes synchronously while its parent is building.
         // A skin may also be replaced before this frame has finished.
@@ -746,9 +744,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleFrameRateChange() {
-    final target = widget.controller.frameRate.effectiveFramesPerSecond;
-    _spineController?.targetFramesPerSecond = target;
-    _seatObjectController.targetFramesPerSecond = target;
+    // spine_flutter 4.2.36 has no runtime frame-rate setter. Kept as a hook.
   }
 
   void _handleControllerChange({bool forceAppearanceReload = false}) {
@@ -1984,7 +1980,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final name = _windAnimationName;
     if (name == null) return;
     final strength = _windEnvelope.advance(
-      controller.updateDelta,
+      kSpineFrameDelta,
       characterWindForStage(widget.controller.selectedStageId),
     );
     final state = controller.animationState;
@@ -2032,7 +2028,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _applySpeakingHeadMotion(SpineWidgetController controller) {
-    final delta = controller.updateDelta;
+    final delta = kSpineFrameDelta;
     // Resolve gaze against this frame's authored world pose, without advancing
     // physics. The drawable steps physics once AFTER these local offsets.
     controller.skeleton.updateWorldTransform(Physics.none);
@@ -2212,7 +2208,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final offsets = _bodyGaze.sample(
       direction: offset / 140,
-      delta: controller.updateDelta,
+      delta: kSpineFrameDelta,
       influence: influence,
       standing: _appearance.isStanding,
       crossLegged: _sittingId == 'sitting_agura',
@@ -6795,7 +6791,6 @@ class _SceneSpineLayerState extends State<_SceneSpineLayer> {
   void initState() {
     super.initState();
     _controller = SpineWidgetController(
-      targetFramesPerSecond: widget.frameRate.effectiveFramesPerSecond,
       onInitialized: (_) {
         if (!mounted) return;
         widget.onReady?.call();
@@ -6814,8 +6809,7 @@ class _SceneSpineLayerState extends State<_SceneSpineLayer> {
   }
 
   void _syncFrameRate() {
-    _controller.targetFramesPerSecond =
-        widget.frameRate.effectiveFramesPerSecond;
+    // spine_flutter 4.2.36 has no runtime frame-rate setter. Kept as a hook.
   }
 
   @override
@@ -7624,7 +7618,6 @@ class _TextureAppearancePreviewState extends State<_TextureAppearancePreview> {
       widget.appearance.assetName,
     );
     _controller = SpineWidgetController(
-      targetFramesPerSecond: 30,
       onInitialized: (controller) {
         final idle = widget.appearance.idleAnimations.firstOrNull;
         if (idle != null &&
