@@ -57,8 +57,21 @@ class Slot {
   Attachment? getAttachment() => null;
 }
 
+class BoneData {
+  const BoneData();
+  String getName() => '';
+}
+
 class Bone {
   const Bone();
+  BoneData getData() => const BoneData();
+  Bone? getParent() => null;
+  double getX() => 0;
+  void setX(double value) {}
+  double getY() => 0;
+  void setY(double value) {}
+  double getWorldX() => 0;
+  double getWorldY() => 0;
   double getRotation() => 0;
   void setRotation(double value) {}
   void setScaleY(double value) {}
@@ -68,6 +81,8 @@ class Skeleton {
   Skeleton();
   Bone? findBone(String name) => null;
   Slot? findSlot(String name) => null;
+  List<Slot> getSlots() => const <Slot>[];
+  void updateWorldTransform(Physics physics) {}
   Bounds getBounds() => const Bounds(0, 0, 0, 0);
 }
 
@@ -218,6 +233,7 @@ class SpineWidget extends StatelessWidget {
     BoxFit fit = BoxFit.contain,
     Alignment alignment = Alignment.center,
     AssetBundle? bundle,
+    BoundsProvider? boundsProvider,
   }) =>
       SpineWidget._(key: key, fit: fit, alignment: alignment);
 
@@ -227,6 +243,7 @@ class SpineWidget extends StatelessWidget {
     Key? key,
     BoxFit fit = BoxFit.contain,
     Alignment alignment = Alignment.center,
+    BoundsProvider? boundsProvider,
   }) =>
       SpineWidget._(key: key, fit: fit, alignment: alignment);
 
