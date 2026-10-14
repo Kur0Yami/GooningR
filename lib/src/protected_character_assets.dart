@@ -74,6 +74,32 @@ class ProtectedCharacterAssets {
     return ProtectedCharacterAssetBundle.withTexture(files, texture);
   }
 
+  // Plain-asset path (same convention as the Kur0 build): atlas/png/skel/
+  // _gesture.json loaded directly from assets/character/ryza/<n>/. No key
+  // needed. Falls back to the protected pack when any file is missing.
+  static const List<String> _plainSuffixes = <String>[
+    '.atlas',
+    '.png',
+    '.skel',
+    '_gesture.json',
+  ];
+
+  static Future<Map<String, Uint8List>?> _tryLoadPlainFiles(
+    String assetName,
+  ) async {
+    final root = 'assets/character/ryza/$assetName';
+    final files = <String, Uint8List>{};
+    for (final suffix in _plainSuffixes) {
+      final path = '$root/$assetName$suffix';
+      try {
+        files[path] = await _loadRootBytes(path);
+      } on FlutterError {
+        return null;
+      }
+    }
+    return files;
+  }
+
   static Future<Map<String, Uint8List>> originalFilesFor(
     String assetName,
   ) async {
@@ -100,6 +126,8 @@ class ProtectedCharacterAssets {
       }
       return local;
     }
+    final plain = await _tryLoadPlainFiles(assetName);
+    if (plain != null) return plain;
     final key = _key();
     final encrypted = await _loadRootBytes(
       'assets/protected/character/$assetName.aarpack',
@@ -119,6 +147,11 @@ class ProtectedCharacterAssets {
         throw FlutterError('Local character preview not found: $assetName');
       }
       return preview;
+    }
+    try {
+      return await _loadRootBytes('assets/images/skins/$assetName.png');
+    } on FlutterError {
+      // No plain preview; fall through to the protected preview pack.
     }
     final key = _key();
     final encrypted = await _loadRootBytes(
