@@ -1051,7 +1051,7 @@ class AppController extends ChangeNotifier {
         : value.trim();
   }
 
-  String fishAudioFormat = 'mp3';
+  String fishAudioFormat = 'wav';
   String fishAudioLatency = 'normal';
   double fishAudioSpeed = 1.0;
   String dashScopeTtsBaseUrl =
@@ -1340,7 +1340,7 @@ class AppController extends ChangeNotifier {
         _preferences.getString('fish_audio_reference_id') ?? '';
     fishAudioAsmrReferenceId =
         _preferences.getString('fish_audio_asmr_reference_id') ?? '';
-    fishAudioFormat = _preferences.getString('fish_audio_format') ?? 'mp3';
+    fishAudioFormat = _preferences.getString('fish_audio_format') ?? 'wav';
     fishAudioLatency = _preferences.getString('fish_audio_latency') ?? 'normal';
     fishAudioSpeed = _preferences.getDouble('fish_audio_speed') ?? 1.0;
     dashScopeTtsBaseUrl =
@@ -4793,7 +4793,7 @@ $japanesePunctuationRule
     fishAudioReferenceId = preferences['fishAudioReferenceId'] as String? ?? '';
     fishAudioAsmrReferenceId =
         preferences['fishAudioAsmrReferenceId'] as String? ?? '';
-    fishAudioFormat = preferences['fishAudioFormat'] as String? ?? 'mp3';
+    fishAudioFormat = preferences['fishAudioFormat'] as String? ?? 'wav';
     fishAudioLatency = preferences['fishAudioLatency'] as String? ?? 'normal';
     fishAudioSpeed = (preferences['fishAudioSpeed'] as num?)?.toDouble() ?? 1.0;
     dashScopeTtsBaseUrl =
