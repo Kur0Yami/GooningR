@@ -1,0 +1,20 @@
+name: spine_flutter
+description: >
+  Dummy no-op stub of spine_flutter. Cuma buat bikin CI/GitHub Actions
+  bisa flutter pub get + flutter build apk --debug tanpa runtime Spine
+  asli. Karakter TIDAK akan tampil/bergerak dengan package ini -- asset
+  asli disuntik manual ke APK hasil build (lihat docs/RESOURCE_SETUP_AND_BUILD.md).
+  Ganti dengan package spine_flutter asli begitu ada akses lisensinya.
+version: 0.0.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.13.2
+  flutter: ">=3.3.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
