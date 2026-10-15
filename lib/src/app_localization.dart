@@ -1,21 +1,29 @@
 enum AppThemePreference { system, light, dark }
 
-enum AppLanguage { chinese, english, japanese }
+enum AppLanguage { chinese, english, japanese, indonesian }
 
-enum TranslationLanguage { none, chinese, english, japanese }
+enum TranslationLanguage { none, chinese, english, japanese, indonesian }
 
 extension AppLanguageData on AppLanguage {
-  String text(String chinese, String english, String japanese) =>
-      switch (this) {
-        AppLanguage.chinese => chinese,
-        AppLanguage.english => english,
-        AppLanguage.japanese => japanese,
-      };
+  // indonesian opsional: dipanggil dengan 3 argumen lama (tanpa indonesian)
+  // tetap kompilasi dan otomatis jatuh ke teks Inggris saat bahasa=Indonesia.
+  String text(
+    String chinese,
+    String english,
+    String japanese, {
+    String? indonesian,
+  }) => switch (this) {
+    AppLanguage.chinese => chinese,
+    AppLanguage.english => english,
+    AppLanguage.japanese => japanese,
+    AppLanguage.indonesian => indonesian ?? english,
+  };
 
   String get nativeLabel => switch (this) {
     AppLanguage.chinese => '中文',
     AppLanguage.english => 'English',
     AppLanguage.japanese => '日本語',
+    AppLanguage.indonesian => 'Bahasa Indonesia',
   };
 
   String get promptLabel => switch (this) {
@@ -23,12 +31,14 @@ extension AppLanguageData on AppLanguage {
       'Chinese (Simplified Chinese unless quoting a source)',
     AppLanguage.english => 'English',
     AppLanguage.japanese => 'Japanese',
+    AppLanguage.indonesian => 'Indonesian (Bahasa Indonesia)',
   };
 
   String get audioLocaleCode => switch (this) {
     AppLanguage.chinese => 'zh-tw',
     AppLanguage.english => 'en',
     AppLanguage.japanese => 'jp',
+    AppLanguage.indonesian => 'id',
   };
 }
 
@@ -42,6 +52,7 @@ extension TranslationLanguageData on TranslationLanguage {
     TranslationLanguage.chinese => '中文',
     TranslationLanguage.english => 'English',
     TranslationLanguage.japanese => '日本語',
+    TranslationLanguage.indonesian => 'Bahasa Indonesia',
   };
 
   String? get promptLabel => switch (this) {
@@ -49,6 +60,7 @@ extension TranslationLanguageData on TranslationLanguage {
     TranslationLanguage.chinese => 'Chinese (Simplified Chinese)',
     TranslationLanguage.english => 'English',
     TranslationLanguage.japanese => 'Japanese',
+    TranslationLanguage.indonesian => 'Indonesian (Bahasa Indonesia)',
   };
 }
 

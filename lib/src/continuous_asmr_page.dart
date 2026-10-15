@@ -527,6 +527,7 @@ class _ContinuousAsmrPageState extends State<ContinuousAsmrPage> {
           AppLanguage.chinese => '你好。',
           AppLanguage.japanese => 'こんにちは。',
           AppLanguage.english => '',
+          AppLanguage.indonesian => '',
         };
         if (readinessText.isEmpty) {
           throw const FormatException('CosyVoice 3 当前只支持中文和日文台词');

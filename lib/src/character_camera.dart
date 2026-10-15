@@ -7,6 +7,9 @@ const characterCameraGestureKey = ValueKey('character-stage-gesture');
 const characterCameraTransformKey = ValueKey('character-camera-transform');
 const characterCameraOffsetKey = ValueKey('character-camera-offset');
 
+/// Kamera karakter: zoom + geser (kini ke segala arah, bukan hanya atas-bawah).
+/// Posisi disimpan sebagai pecahan ukuran area, lalu dilaporkan lewat
+/// [onCameraChanged] agar bisa disimpan permanen (lihat AppController).
 class CharacterCamera extends StatefulWidget {
   const CharacterCamera({
     super.key,
@@ -14,9 +17,11 @@ class CharacterCamera extends StatefulWidget {
     required this.onTap,
     this.onGazeChanged,
     this.onGazeEnd,
+    this.onCameraChanged,
     this.minScale = 0.8,
     this.maxScale = 2.2,
     this.initialScale = 1.25,
+    this.initialHorizontalOffsetFraction = 0.0,
     this.initialVerticalOffsetFraction = 0.2,
     this.keepSceneProportions = false,
   });
@@ -25,9 +30,14 @@ class CharacterCamera extends StatefulWidget {
   final ValueChanged<Offset> onTap;
   final ValueChanged<Offset>? onGazeChanged;
   final VoidCallback? onGazeEnd;
+
+  /// (zoom, geser-x sebagai pecahan lebar, geser-y sebagai pecahan tinggi).
+  final void Function(double scale, double offsetX, double offsetY)?
+  onCameraChanged;
   final double minScale;
   final double maxScale;
   final double initialScale;
+  final double initialHorizontalOffsetFraction;
   final double initialVerticalOffsetFraction;
   final bool keepSceneProportions;
 
@@ -37,9 +47,13 @@ class CharacterCamera extends StatefulWidget {
 
 class _CharacterCameraState extends State<CharacterCamera>
     with WidgetsBindingObserver {
+  static const double _minOffsetX = -1.0;
+  static const double _maxOffsetX = 1.0;
+
   late double _scale;
+  late double _offsetX;
+  late double _offsetY;
   double _scaleAtGestureStart = 1;
-  double? _verticalOffset;
   Size? _referenceSceneSize;
   bool _pinchDetected = false;
   bool _suppressTap = false;
@@ -50,7 +64,27 @@ class _CharacterCameraState extends State<CharacterCamera>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _syncFromWidget();
+  }
+
+  void _syncFromWidget() {
     _scale = widget.initialScale.clamp(widget.minScale, widget.maxScale);
+    _offsetX = widget.initialHorizontalOffsetFraction
+        .clamp(_minOffsetX, _maxOffsetX)
+        .toDouble();
+    _offsetY = widget.initialVerticalOffsetFraction;
+  }
+
+  @override
+  void didUpdateWidget(covariant CharacterCamera oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialScale != widget.initialScale ||
+        oldWidget.initialHorizontalOffsetFraction !=
+            widget.initialHorizontalOffsetFraction ||
+        oldWidget.initialVerticalOffsetFraction !=
+            widget.initialVerticalOffsetFraction) {
+      _syncFromWidget();
+    }
   }
 
   @override
@@ -77,9 +111,10 @@ class _CharacterCameraState extends State<CharacterCamera>
           _referenceSceneSize ??= constraints.biggest;
         }
         final referenceSize = _referenceSceneSize ?? constraints.biggest;
-        final verticalOffset =
-            _verticalOffset ??
-            constraints.maxHeight * widget.initialVerticalOffsetFraction;
+        final translation = Offset(
+          _offsetX * constraints.maxWidth,
+          _offsetY * constraints.maxHeight,
+        );
         return Semantics(
           button: true,
           label: '莱莎，点击触发互动',
@@ -91,7 +126,7 @@ class _CharacterCameraState extends State<CharacterCamera>
                   _unscalePosition(
                     event.localPosition,
                     constraints.biggest,
-                    verticalOffset,
+                    translation,
                   ),
                 );
               } else {
@@ -104,7 +139,7 @@ class _CharacterCameraState extends State<CharacterCamera>
                   _unscalePosition(
                     event.localPosition,
                     constraints.biggest,
-                    verticalOffset,
+                    translation,
                   ),
                 );
               }
@@ -126,38 +161,41 @@ class _CharacterCameraState extends State<CharacterCamera>
                   _unscalePosition(
                     details.localPosition,
                     constraints.biggest,
-                    verticalOffset,
+                    translation,
                   ),
                 );
               },
               onScaleStart: (details) {
                 _scaleAtGestureStart = _scale;
-                _verticalOffset ??= verticalOffset;
                 _pinchDetected = details.pointerCount > 1;
               },
               onScaleUpdate: (details) {
-                if (details.pointerCount == 1) {
-                  return;
-                }
                 if (details.pointerCount < 2) return;
                 _pinchDetected = true;
                 _suppressTap = true;
-                final nextScale = (_scaleAtGestureStart * details.scale).clamp(
-                  widget.minScale,
-                  widget.maxScale,
-                );
-                final maxDown = constraints.maxHeight * 0.55;
-                final maxUp = constraints.maxHeight * 0.35;
-                final currentOffset = _verticalOffset ?? verticalOffset;
-                final nextOffset = (currentOffset + details.focalPointDelta.dy)
-                    .clamp(-maxUp, maxDown);
+                final nextScale = (_scaleAtGestureStart * details.scale)
+                    .clamp(widget.minScale, widget.maxScale)
+                    .toDouble();
+                final width = math.max(constraints.maxWidth, 1.0);
+                final height = math.max(constraints.maxHeight, 1.0);
+                final nextOffsetX =
+                    (_offsetX + details.focalPointDelta.dx / width)
+                        .clamp(_minOffsetX, _maxOffsetX)
+                        .toDouble();
+                final maxDown = 0.55, maxUp = 0.35;
+                final nextOffsetY =
+                    (_offsetY + details.focalPointDelta.dy / height)
+                        .clamp(-maxUp, maxDown)
+                        .toDouble();
                 if ((nextScale - _scale).abs() < 0.001 &&
-                    (nextOffset - currentOffset).abs() < 0.1) {
+                    (nextOffsetX - _offsetX).abs() < 0.0005 &&
+                    (nextOffsetY - _offsetY).abs() < 0.0005) {
                   return;
                 }
                 setState(() {
                   _scale = nextScale;
-                  _verticalOffset = nextOffset;
+                  _offsetX = nextOffsetX;
+                  _offsetY = nextOffsetY;
                 });
               },
               onScaleEnd: (_) {
@@ -167,12 +205,13 @@ class _CharacterCameraState extends State<CharacterCamera>
                     const Duration(milliseconds: 280),
                     () => _suppressTap = false,
                   );
+                  widget.onCameraChanged?.call(_scale, _offsetX, _offsetY);
                 }
                 _pinchDetected = false;
               },
               child: Transform.translate(
                 key: characterCameraOffsetKey,
-                offset: Offset(0, verticalOffset),
+                offset: translation,
                 child: Transform.scale(
                   key: characterCameraTransformKey,
                   scale: _scale,
@@ -201,9 +240,9 @@ class _CharacterCameraState extends State<CharacterCamera>
   Offset _unscalePosition(
     Offset position,
     Size stageSize,
-    double verticalOffset,
+    Offset translation,
   ) {
-    final translated = position - Offset(0, verticalOffset);
+    final translated = position - translation;
     final origin = Offset(stageSize.width / 2, stageSize.height);
     final cameraPosition = origin + (translated - origin) / _scale;
     final reference = _referenceSceneSize;

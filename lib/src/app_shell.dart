@@ -94,6 +94,8 @@ class _AppShellState extends State<AppShell>
   bool _menuOpen = false;
   bool _chatUiHidden = false;
   bool _chatFullscreen = false;
+  // null = belum pernah mengubah mode sistem; true/false = mode terakhir yang diterapkan.
+  bool? _immersiveApplied;
   bool _borderless = false;
   late final AnimationController _pageTransition;
   late final AnimationController _pageReveal;
@@ -129,6 +131,10 @@ class _AppShellState extends State<AppShell>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     unawaited(_relay.setForeground(state == AppLifecycleState.resumed));
+    if (state == AppLifecycleState.resumed) {
+      // MIUI dan sejenisnya sering mengembalikan status bar setelah resume.
+      _syncSystemUi(force: true);
+    }
     if (state != AppLifecycleState.resumed) {
       _activePointers.clear();
       widget.controller.frameRate.setActivity(FrameRateActivity.touch, false);
@@ -170,6 +176,24 @@ class _AppShellState extends State<AppShell>
       _chatUiHidden = !_chatUiHidden;
       if (_chatUiHidden) _menuOpen = false;
     });
+  }
+
+  /// Terapkan mode layar penuh (status bar + tombol navigasi Android
+  /// disembunyikan). Bila setting mati dan belum pernah dinyalakan, tidak
+  /// menyentuh pengaturan sistem sama sekali.
+  void _syncSystemUi({bool force = false}) {
+    final want = widget.controller.immersiveMode;
+    if (!want && _immersiveApplied != true) return;
+    if (!force && _immersiveApplied == want) return;
+    _immersiveApplied = want;
+    unawaited(
+      want
+          ? SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky)
+          : SystemChrome.setEnabledSystemUIMode(
+              SystemUiMode.manual,
+              overlays: SystemUiOverlay.values,
+            ),
+    );
   }
 
   void _selectDestination(AppDestination value) {
@@ -408,6 +432,7 @@ class _AppShellState extends State<AppShell>
       animation: widget.controller,
       builder: (context, _) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
+          _syncSystemUi();
           _soundscape.sync(
             widget.controller,
             worldMapVisible: _destination == AppDestination.worldMap,
@@ -441,6 +466,10 @@ class _AppShellState extends State<AppShell>
           onCharacterReady: widget.onCharacterReady,
           onCharacterLoadFailed: widget.onCharacterLoadFailed,
           hideUi: _chatUiHidden || overlayDestination,
+          hideUiExceptChat:
+              _chatUiHidden &&
+              widget.controller.hideUiKeepsChat &&
+              !overlayDestination,
           onFullscreenChanged: (value) => setState(() {
             _chatFullscreen = value;
             if (value) _menuOpen = false;
@@ -501,7 +530,9 @@ class _AppShellState extends State<AppShell>
                           children: [
                             content,
                             if (displayedDestination == AppDestination.chat &&
-                                !_chatFullscreen)
+                                !_chatFullscreen &&
+                                !(_chatUiHidden &&
+                                    widget.controller.hideUiHidesToggle))
                               Positioned(
                                 left: MediaQuery.paddingOf(context).left + 8,
                                 top: safeTop + 8,
@@ -521,6 +552,21 @@ class _AppShellState extends State<AppShell>
                                         _chatUiHidden ? 'UIを表示' : 'UIを隠す',
                                       ),
                                   onPressed: _toggleChatUiVisibility,
+                                ),
+                              ),
+                            if (displayedDestination == AppDestination.chat &&
+                                _chatUiHidden &&
+                                widget.controller.hideUiHidesToggle)
+                              // Tombol mata disembunyikan: tekan lama di
+                              // pojok kiri atas untuk memulihkan antarmuka.
+                              Positioned(
+                                left: 0,
+                                top: safeTop,
+                                width: 128,
+                                height: 64,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onLongPress: _toggleChatUiVisibility,
                                 ),
                               ),
                           ],

@@ -560,6 +560,10 @@ Iterable<String> _expandInlineSpeakerLines(String response) sync* {
   }
 }
 
+/// Diatur dari ChatScreen (dari setting narator di AppController). Global
+/// supaya semua pemanggil groupAssistantSegmentsForDisplay konsisten.
+bool assistantNarratorVisible = true;
+
 List<List<ChatSegment>> groupAssistantSegmentsForDisplay(
   String response, {
   String defaultPrimaryCharacterId = 'ryza',
@@ -570,7 +574,10 @@ List<List<ChatSegment>> groupAssistantSegmentsForDisplay(
             defaultPrimaryCharacterId: defaultPrimaryCharacterId,
           )
           .where(
-            (segment) => displayTextForAssistantSegment(segment).isNotEmpty,
+            (segment) =>
+                (assistantNarratorVisible ||
+                    segment.speaker != ChatSpeaker.narrator) &&
+                displayTextForAssistantSegment(segment).isNotEmpty,
           )
           .toList(growable: false);
   if (segments.isEmpty && response.trim().isNotEmpty) {

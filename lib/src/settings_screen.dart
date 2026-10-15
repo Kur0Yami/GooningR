@@ -488,6 +488,176 @@ class SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 SwitchListTile(
+                  value: controller.narratorEnabled,
+                  onChanged: controller.setNarratorEnabled,
+                  secondary: const Icon(Icons.menu_book_outlined),
+                  title: Text(
+                    language.text(
+                      '显示旁白',
+                      'Show narration',
+                      'ナレーションを表示',
+                      indonesian: 'Tampilkan narasi',
+                    ),
+                  ),
+                  subtitle: Text(
+                    language.text(
+                      '关闭后隐藏旁白，并让 AI 不再生成旁白',
+                      'Hide narration and ask the AI not to write it',
+                      'ナレーションを隠し、AIにも生成させません',
+                      indonesian: 'Matikan untuk sembunyikan narasi dan minta AI tidak menulisnya',
+                    ),
+                  ),
+                ),
+                SwitchListTile(
+                  value: controller.hideUiKeepsChat,
+                  onChanged: controller.setHideUiKeepsChat,
+                  secondary: const Icon(Icons.chat_outlined),
+                  title: Text(
+                    language.text(
+                      '隐藏界面时保留聊天',
+                      'Keep chat when hiding UI',
+                      'UI非表示時もチャットは残す',
+                      indonesian: 'Sisakan chat saat UI disembunyikan',
+                    ),
+                  ),
+                  subtitle: Text(
+                    language.text(
+                      '隐藏界面后仅保留聊天面板',
+                      'Only the chat panel stays visible',
+                      'チャットパネルのみ表示したままにします',
+                      indonesian: 'Hanya panel chat yang tetap tampil',
+                    ),
+                  ),
+                ),
+                SwitchListTile(
+                  value: controller.hideUiHidesToggle,
+                  onChanged: controller.setHideUiHidesToggle,
+                  secondary: const Icon(Icons.visibility_off_outlined),
+                  title: Text(
+                    language.text(
+                      '隐藏界面时同时隐藏眼睛按钮',
+                      'Hide the eye button too',
+                      '非表示時に目のボタンも隠す',
+                      indonesian: 'Sembunyikan ikon mata juga',
+                    ),
+                  ),
+                  subtitle: Text(
+                    language.text(
+                      '按返回键，或长按左上角即可恢复',
+                      'Press Back or long-press the top-left corner to restore',
+                      '戻るキー、または左上を長押しで復元',
+                      indonesian: 'Tekan tombol kembali, atau tekan lama pojok kiri atas untuk memulihkan',
+                    ),
+                  ),
+                ),
+                SwitchListTile(
+                  value: controller.immersiveMode,
+                  onChanged: controller.setImmersiveMode,
+                  secondary: const Icon(Icons.fullscreen_rounded),
+                  title: Text(
+                    language.text(
+                      '全屏沉浸模式',
+                      'Immersive full screen',
+                      '全画面モード',
+                      indonesian: 'Mode layar penuh',
+                    ),
+                  ),
+                  subtitle: Text(
+                    language.text(
+                      '隐藏状态栏与导航栏，从屏幕边缘滑动可临时显示',
+                      'Hide the status and navigation bars; swipe from an edge to show them briefly',
+                      'ステータスバーとナビバーを隠します。端からスワイプで一時表示',
+                      indonesian: 'Sembunyikan status bar & navigasi; geser dari tepi untuk memunculkan sebentar',
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.zoom_in_map_rounded),
+                  title: Text(
+                    language.text(
+                      '角色位置与缩放',
+                      'Character position & zoom',
+                      'キャラの位置とズーム',
+                      indonesian: 'Posisi & zoom karakter',
+                    ),
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        language.text(
+                          '也可在聊天界面用两根手指捏合缩放、拖动移动',
+                          'You can also pinch and drag with two fingers in chat',
+                          'チャット画面で二本指のピンチ/ドラッグでも調整できます',
+                          indonesian: 'Bisa juga dicubit/digeser dua jari langsung di layar chat',
+                        ),
+                      ),
+                      Text(
+                        language.text('缩放', 'Zoom', 'ズーム', indonesian: 'Zoom'),
+                      ),
+                      Slider(
+                        value: controller.characterZoom.clamp(0.8, 2.2).toDouble(),
+                        min: 0.8,
+                        max: 2.2,
+                        onChanged: (value) =>
+                            controller.setCharacterCamera(zoom: value),
+                      ),
+                      Text(
+                        language.text(
+                          '左右',
+                          'Horizontal',
+                          '左右',
+                          indonesian: 'Kiri-kanan',
+                        ),
+                      ),
+                      Slider(
+                        value: controller.characterOffsetX
+                            .clamp(-0.8, 0.8)
+                            .toDouble(),
+                        min: -0.8,
+                        max: 0.8,
+                        onChanged: (value) =>
+                            controller.setCharacterCamera(offsetX: value),
+                      ),
+                      Text(
+                        language.text(
+                          '上下',
+                          'Vertical',
+                          '上下',
+                          indonesian: 'Atas-bawah',
+                        ),
+                      ),
+                      Slider(
+                        value: controller.characterOffsetY
+                            .clamp(-0.35, 0.55)
+                            .toDouble(),
+                        min: -0.35,
+                        max: 0.55,
+                        onChanged: (value) =>
+                            controller.setCharacterCamera(offsetY: value),
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton(
+                          onPressed: () => controller.setCharacterCamera(
+                            zoom: 1.25,
+                            offsetX: 0,
+                            offsetY: 0.2,
+                          ),
+                          child: Text(
+                            language.text(
+                              '恢复默认',
+                              'Reset to default',
+                              'デフォルトに戻す',
+                              indonesian: 'Kembalikan ke bawaan',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SwitchListTile(
                   value:
                       controller.activeCharacterProfile.hasSpineResources &&
                       controller.gazeTrackingEnabled,

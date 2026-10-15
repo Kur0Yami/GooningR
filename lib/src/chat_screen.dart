@@ -195,6 +195,7 @@ class ChatScreen extends StatefulWidget {
     required this.onShopPressed,
     this.relayService,
     required this.hideUi,
+    this.hideUiExceptChat = false,
     this.onFullscreenChanged,
     this.onCharacterReady,
     this.onCharacterLoadFailed,
@@ -205,6 +206,10 @@ class ChatScreen extends StatefulWidget {
   final VoidCallback onShopPressed;
   final RelayService? relayService;
   final bool hideUi;
+
+  /// Saat [hideUi] aktif, panel chat tetap ditampilkan (lihat setting
+  /// "隐藏界面时保留聊天").
+  final bool hideUiExceptChat;
   final ValueChanged<bool>? onFullscreenChanged;
   final VoidCallback? onCharacterReady;
   final VoidCallback? onCharacterLoadFailed;
@@ -6108,6 +6113,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    assistantNarratorVisible = widget.controller.narratorEnabled;
     final isWide = MediaQuery.sizeOf(context).width >= 720;
     final usesLiquidGlass = widget.controller.liquidGlassChatUi;
     final mediaQuery = MediaQuery.of(context);
@@ -6327,7 +6333,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
-        if (!widget.hideUi)
+        if (!widget.hideUi || widget.hideUiExceptChat)
           AnimatedPositioned(
             duration: viewportChanged
                 ? Duration.zero
@@ -6582,6 +6588,15 @@ class _ChatScreenState extends State<ChatScreen> {
         if (_usesProtectedSpine)
           CharacterCamera(
             keepSceneProportions: true,
+            initialScale: widget.controller.characterZoom,
+            initialHorizontalOffsetFraction: widget.controller.characterOffsetX,
+            initialVerticalOffsetFraction: widget.controller.characterOffsetY,
+            onCameraChanged: (scale, offsetX, offsetY) =>
+                widget.controller.setCharacterCamera(
+                  zoom: scale,
+                  offsetX: offsetX,
+                  offsetY: offsetY,
+                ),
             onTap: _reactToTap,
             onGazeChanged: widget.controller.gazeTrackingEnabled
                 ? _updateGaze
@@ -8417,8 +8432,34 @@ class _GlassMessageList extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 2),
-                _UserComposerBody(text: userParts.speech, glass: true),
+                const SizedBox(height: 4),
+                if (userParts.speech.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.20),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.30),
+                        ),
+                        // "Ekor" bubble di kanan atas, mengarah ke nama di atasnya.
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(4),
+                          bottomLeft: Radius.circular(16),
+                          bottomRight: Radius.circular(16),
+                        ),
+                      ),
+                      child: _UserComposerBody(
+                        text: userParts.speech,
+                        glass: true,
+                      ),
+                    ),
+                  ),
                 if (message.attachments.isNotEmpty) ...[
                   const SizedBox(height: 7),
                   Align(
@@ -8639,41 +8680,47 @@ class _SeparatedAssistantMessage extends StatelessWidget {
         );
       } else if (run.first.speaker == ChatSpeaker.character) {
         children.add(
-          _CharacterRun(
-            segments: run,
-            primaryCharacterId:
-                characterProfile?.id ?? CharacterRuntimeIds.ryza,
-            onSpeechText:
-                onSpeechText != null &&
-                    isKlaudiaSpeechSegment(
-                      run.first,
-                      activeCharacterId:
-                          characterProfile?.id ?? CharacterRuntimeIds.ryza,
-                    )
-                ? (text) => onSpeechText!(text, ChatSpeaker.character)
-                : null,
-            language: language,
-            glass: glass,
-            translationOnly: translationOnly,
-            activeSegmentIndex: activeInRun,
-            activeSegmentDisplayDuration: activeSegmentDisplayDuration,
+          _dialogueBubble(
+            context,
+            _CharacterRun(
+              segments: run,
+              primaryCharacterId:
+                  characterProfile?.id ?? CharacterRuntimeIds.ryza,
+              onSpeechText:
+                  onSpeechText != null &&
+                      isKlaudiaSpeechSegment(
+                        run.first,
+                        activeCharacterId:
+                            characterProfile?.id ?? CharacterRuntimeIds.ryza,
+                      )
+                  ? (text) => onSpeechText!(text, ChatSpeaker.character)
+                  : null,
+              language: language,
+              glass: glass,
+              translationOnly: translationOnly,
+              activeSegmentIndex: activeInRun,
+              activeSegmentDisplayDuration: activeSegmentDisplayDuration,
+            ),
           ),
         );
       } else {
         children.add(
-          _RyzaRun(
-            characterProfile:
-                characterProfile ??
-                characterRuntimeProfileById(CharacterRuntimeIds.ryza),
-            onSpeechText: onSpeechText == null
-                ? null
-                : (text) => onSpeechText!(text, ChatSpeaker.ryza),
-            segments: run,
-            language: language,
-            glass: glass,
-            translationOnly: translationOnly,
-            activeSegmentIndex: activeInRun,
-            activeSegmentDisplayDuration: activeSegmentDisplayDuration,
+          _dialogueBubble(
+            context,
+            _RyzaRun(
+              characterProfile:
+                  characterProfile ??
+                  characterRuntimeProfileById(CharacterRuntimeIds.ryza),
+              onSpeechText: onSpeechText == null
+                  ? null
+                  : (text) => onSpeechText!(text, ChatSpeaker.ryza),
+              segments: run,
+              language: language,
+              glass: glass,
+              translationOnly: translationOnly,
+              activeSegmentIndex: activeInRun,
+              activeSegmentDisplayDuration: activeSegmentDisplayDuration,
+            ),
           ),
         );
       }
@@ -8690,6 +8737,32 @@ class _SeparatedAssistantMessage extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Bungkus ucapan Ryza/NPC dengan bentuk bubble (rounded, sedikit gelap).
+/// Hanya dipakai untuk baris yang benar-benar diucapkan; narasi (_NarratorRun)
+/// sengaja dibiarkan polos tanpa bubble, seperti sebelumnya.
+Widget _dialogueBubble(BuildContext context, Widget child) {
+  final maxWidth = MediaQuery.sizeOf(context).width * 0.86;
+  return Align(
+    alignment: Alignment.centerLeft,
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.30),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(4),
+            topRight: Radius.circular(16),
+            bottomLeft: Radius.circular(16),
+            bottomRight: Radius.circular(16),
+          ),
+        ),
+        child: child,
+      ),
+    ),
+  );
 }
 
 class _NarratorRun extends StatelessWidget {

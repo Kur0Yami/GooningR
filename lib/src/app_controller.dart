@@ -1119,6 +1119,15 @@ class AppController extends ChangeNotifier {
   bool gazeTrackingEnabled = true;
   bool showMicrophoneButton = false;
   bool unlockInputWhileReplying = false;
+  // 旁白开关；摄像机位置（缩放+水平/垂直偏移，均为相对画面尺寸的比例）；
+  // 隐藏界面的两个附加选项；全屏沉浸模式。
+  bool narratorEnabled = true;
+  double characterZoom = 1.25;
+  double characterOffsetX = 0.0;
+  double characterOffsetY = 0.2;
+  bool hideUiHidesToggle = false;
+  bool hideUiKeepsChat = false;
+  bool immersiveMode = false;
   AppFrameRateMode frameRateMode = AppFrameRateMode.adaptive;
   AppThemePreference themePreference = AppThemePreference.system;
   AppAccentTheme accentTheme = AppAccentTheme.jade;
@@ -1128,8 +1137,8 @@ class AppController extends ChangeNotifier {
   bool translationOnly = false;
   bool independentTranslation = true;
   AppLanguage interfaceLanguage = AppLanguage.chinese;
-  AppLanguage narratorLanguage = AppLanguage.chinese;
-  AppLanguage characterReplyLanguage = AppLanguage.chinese;
+  AppLanguage narratorLanguage = AppLanguage.indonesian;
+  AppLanguage characterReplyLanguage = AppLanguage.indonesian;
   TranslationLanguage translationLanguage = TranslationLanguage.none;
   AppLanguage? _npcReplyLanguageOverride;
   TranslationLanguage? _npcTranslationLanguageOverride;
@@ -1482,6 +1491,19 @@ class AppController extends ChangeNotifier {
         _preferences.getBool('show_microphone_button') ?? false;
     unlockInputWhileReplying =
         _preferences.getBool('unlock_input_while_replying') ?? false;
+    narratorEnabled = _preferences.getBool('narrator_enabled') ?? true;
+    characterZoom = (_preferences.getDouble('character_zoom') ?? 1.25)
+        .clamp(0.6, 3.5)
+        .toDouble();
+    characterOffsetX = (_preferences.getDouble('character_offset_x') ?? 0.0)
+        .clamp(-1.0, 1.0)
+        .toDouble();
+    characterOffsetY = (_preferences.getDouble('character_offset_y') ?? 0.2)
+        .clamp(-0.6, 1.4)
+        .toDouble();
+    hideUiHidesToggle = _preferences.getBool('hide_ui_hides_toggle') ?? false;
+    hideUiKeepsChat = _preferences.getBool('hide_ui_keeps_chat') ?? false;
+    immersiveMode = _preferences.getBool('immersive_mode') ?? false;
     frameRateMode = AppFrameRateMode.values.firstWhere(
       (value) => value.name == _preferences.getString('frame_rate_mode'),
       orElse: () => AppFrameRateMode.adaptive,
@@ -1516,12 +1538,12 @@ class AppController extends ChangeNotifier {
     );
     narratorLanguage = AppLanguage.values.firstWhere(
       (value) => value.name == _preferences.getString('narrator_language'),
-      orElse: () => AppLanguage.chinese,
+      orElse: () => AppLanguage.indonesian,
     );
     characterReplyLanguage = AppLanguage.values.firstWhere(
       (value) =>
           value.name == _preferences.getString('character_reply_language'),
-      orElse: () => AppLanguage.chinese,
+      orElse: () => AppLanguage.indonesian,
     );
     translationLanguage = TranslationLanguage.values.firstWhere(
       (value) => value.name == _preferences.getString('translation_language'),
@@ -2382,7 +2404,7 @@ ${independentSpeechPerformance || !fishTtsEnabled || ttsProvider == TtsProvider.
 每个非空行只能以“旁白：”“莱莎：”“角色[角色ID]：”或“译文：”开头；不要 Markdown、引号、分析过程或用户前缀。
 旁白可以出现多条，并按回复中的顺序显示：对话前的环境、登场或动作铺垫放在台词前；台词后的反应、收尾动作或气氛变化放在台词后。需要时使用“旁白 → 台词 → 旁白”的结构；下方旁白必须简短、描述说完后的新变化，不能重复台词。
 每条莱莎台词开头必须且只能有：${'[情绪][face:表情][action:动作]'}，例如 `[calm][face:neutral][action:none]`。face 只能用 neutral、happy、laughing、angry、sad、crying、shy、tease、cuddle；action 只能用 none、acknowledge、disagree、think、explain、excited、wave、shy、surprised、comfort、playful、invite，或当前能力目录中的 `grp_*`。表情是持续状态，动作是一次性事件；没有新动作就用 `[action:none]`，不要随机堆动作。
-旁白、NPC、译文绝不带 face/action/语音标签，也不使用莱莎 TTS。每轮优先先写 1 条独立短旁白，描写本轮可观察的神态、动作或环境变化；只有纯事实回答或确实没有可叙述变化时可省略。不要把旁白塞进莱莎台词。用户明确要求动作时，先判断是否接受、是否为现在时；只有能力目录支持才选择精确组。否定、引用、假设或过去事件不触发动作。不要输出 Spine 动画名或目录外组名。
+旁白、NPC、译文绝不带 face/action/语音标签，也不使用莱莎 TTS。每轮优先先写 1 条独立短旁白，描写本轮可观察的神态、动作或环境变化；只有纯事实回答或确实没有可叙述变化时可省略。不要把旁白塞进莱莎台词。用户明确要求动作时，先判断是否接受、是否为现在时；只有能力目录支持才选择精确组。否定、引用、假设或过去事件不触发动作。不要输出 Spine 动画名或目录外组名。${narratorEnabled ? '' : ' 旁白已关闭：不要输出任何“旁白：”行，只输出莱莎台词（以及译文）。'}
 
 【表演节奏】
 先判断说话者、意图和情绪，再选 face 与 action；每个自然节拍最多一个主要动作，情绪和动作与上下句平滑衔接。问候/回应可 acknowledge，思考/解释可 think 或 explain，发现/庆祝可 excited，安慰可 comfort，调侃可 playful，拒绝可 disagree；这些只是语义建议，不是强制映射。旁白写出主要动作时，紧邻台词必须带相同 action。
@@ -2448,7 +2470,7 @@ status=ready 时，actions 是本轮外观、姿态和资源解析后真正可�
 动作标签只描述意图，不自动等同于“挠头、叉腰、抱臂”等精确姿势；旁白只有在能力说明确实支持时才能写出具体动作。动作被拒绝或不兼容时，不要把回退动作说成用户要求的精准动作。
 
 【旁白、表情和动作同步】
-旁白是独立的短场景叙述。每轮优先先写 1 条旁白，描写本轮可观察的神态、已确认的身体动作或环境变化；只有纯事实回答或确实没有可叙述变化时可省略。不要重复同一句环境描写。
+旁白是独立的短场景叙述。每轮优先先写 1 条旁白，描写本轮可观察的神态、已确认的身体动作或环境变化；只有纯事实回答或确实没有可叙述变化时可省略。不要重复同一句环境描写。${narratorEnabled ? '' : ' 旁白已关闭：不要输出任何“旁白：”行，只输出莱莎台词（以及译文）。'}
 生成顺序是“先选可执行 action，再写与之相符的旁白和台词”。旁白写出莱莎新发起的主要动作时，紧邻的莱莎台词必须带同一语义 action；使用 none 时只能写环境或延续状态，不能凭空描述新的主要动作。不要代写用户的行动、思想或决定。
 格式示例（只示范语法，不代表本轮资源）：
 旁白：莱莎把刚找到的材料举到灯下，眼神一下亮了起来。
@@ -3881,6 +3903,13 @@ $japanesePunctuationRule
     'dialogueFontScale': dialogueFontScale,
     'translationOnly': translationOnly,
     'independentTranslation': independentTranslation,
+    'narratorEnabled': narratorEnabled,
+    'characterZoom': characterZoom,
+    'characterOffsetX': characterOffsetX,
+    'characterOffsetY': characterOffsetY,
+    'hideUiHidesToggle': hideUiHidesToggle,
+    'hideUiKeepsChat': hideUiKeepsChat,
+    'immersiveMode': immersiveMode,
     'preferCustomUserProfile': preferCustomUserProfile,
     'interfaceLanguage': interfaceLanguage.name,
     'narratorLanguage': narratorLanguage.name,
@@ -4659,6 +4688,21 @@ $japanesePunctuationRule
     );
     translationOnly = data['translationOnly'] == true;
     independentTranslation = data['independentTranslation'] != false;
+    narratorEnabled = data['narratorEnabled'] != false;
+    characterZoom = ((data['characterZoom'] as num?)?.toDouble() ?? 1.25)
+        .clamp(0.6, 3.5)
+        .toDouble();
+    characterOffsetX =
+        ((data['characterOffsetX'] as num?)?.toDouble() ?? 0.0)
+            .clamp(-1.0, 1.0)
+            .toDouble();
+    characterOffsetY =
+        ((data['characterOffsetY'] as num?)?.toDouble() ?? 0.2)
+            .clamp(-0.6, 1.4)
+            .toDouble();
+    hideUiHidesToggle = data['hideUiHidesToggle'] == true;
+    hideUiKeepsChat = data['hideUiKeepsChat'] == true;
+    immersiveMode = data['immersiveMode'] == true;
     textColorTheme = AppAccentTheme.values
         .where((value) => value.name == data['textColorTheme'])
         .firstOrNull;
@@ -4680,11 +4724,11 @@ $japanesePunctuationRule
     );
     narratorLanguage = AppLanguage.values.firstWhere(
       (value) => value.name == data['narratorLanguage'],
-      orElse: () => AppLanguage.chinese,
+      orElse: () => AppLanguage.indonesian,
     );
     characterReplyLanguage = AppLanguage.values.firstWhere(
       (value) => value.name == data['characterReplyLanguage'],
-      orElse: () => AppLanguage.chinese,
+      orElse: () => AppLanguage.indonesian,
     );
     translationLanguage = TranslationLanguage.values.firstWhere(
       (value) => value.name == data['translationLanguage'],
@@ -5780,6 +5824,37 @@ $japanesePunctuationRule
     _changed();
   }
 
+  void setNarratorEnabled(bool value) {
+    narratorEnabled = value;
+    _changed();
+  }
+
+  void setCharacterCamera({double? zoom, double? offsetX, double? offsetY}) {
+    if (zoom != null) characterZoom = zoom.clamp(0.6, 3.5).toDouble();
+    if (offsetX != null) {
+      characterOffsetX = offsetX.clamp(-1.0, 1.0).toDouble();
+    }
+    if (offsetY != null) {
+      characterOffsetY = offsetY.clamp(-0.6, 1.4).toDouble();
+    }
+    _changed();
+  }
+
+  void setHideUiHidesToggle(bool value) {
+    hideUiHidesToggle = value;
+    _changed();
+  }
+
+  void setHideUiKeepsChat(bool value) {
+    hideUiKeepsChat = value;
+    _changed();
+  }
+
+  void setImmersiveMode(bool value) {
+    immersiveMode = value;
+    _changed();
+  }
+
   void setUnlockInputWhileReplying(bool value) {
     unlockInputWhileReplying = value;
     _changed();
@@ -5948,6 +6023,8 @@ $japanesePunctuationRule
       'I heard you: “$input”. This is the local demo reply; with AI chat enabled, I can understand the full context.',
     TranslationLanguage.japanese =>
       '「$input」って聞こえたよ。これはローカルデモの返事だけど、AI会話を有効にすれば文脈全体を理解できるよ。',
+    TranslationLanguage.indonesian =>
+      'Aku dengar: "$input". Ini balasan demo lokal; setelah obrolan AI aktif, aku bisa memahami konteks lengkapnya.',
     TranslationLanguage.none => '',
   };
 
@@ -6231,6 +6308,13 @@ $japanesePunctuationRule
         'unlock_input_while_replying',
         unlockInputWhileReplying,
       ),
+      _preferences.setBool('narrator_enabled', narratorEnabled),
+      _preferences.setDouble('character_zoom', characterZoom),
+      _preferences.setDouble('character_offset_x', characterOffsetX),
+      _preferences.setDouble('character_offset_y', characterOffsetY),
+      _preferences.setBool('hide_ui_hides_toggle', hideUiHidesToggle),
+      _preferences.setBool('hide_ui_keeps_chat', hideUiKeepsChat),
+      _preferences.setBool('immersive_mode', immersiveMode),
       _preferences.setString('frame_rate_mode', frameRateMode.name),
       _preferences.setString('theme_preference', themePreference.name),
       _preferences.setString('interface_language', interfaceLanguage.name),
