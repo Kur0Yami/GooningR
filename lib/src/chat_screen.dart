@@ -607,6 +607,7 @@ class _ChatScreenState extends State<ChatScreen> {
   int _suggestionGeneration = 0;
   late int _observedDataRevision;
   int? _activeAssistantSegmentIndex;
+  bool _speechPreparing = false;
   Duration _activeSegmentDisplayDuration = Duration.zero;
   StreamIterator<String>? _replyIterator;
   // Start at the same minimum as the drag handle, regardless of saved text.
@@ -4297,6 +4298,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     final generation = ++_speechPlaybackGeneration;
+    _speechPreparing = true;
     // One voice position for the whole reply, including prefetched sentences.
     // Changing settings during playback affects the next reply only.
     final asmr = widget.controller.asmrModeEnabled;
@@ -5082,7 +5084,19 @@ class _ChatScreenState extends State<ChatScreen> {
     return null;
   }
 
+  /// Null: tampil semua. kSpeechPendingSegment: sembunyikan teks sampai audio
+  /// segmen pertama mulai. Indeks: tampil sampai segmen yang sedang diputar.
+  int? get _assistantSegmentRevealIndex {
+    if (_activeAssistantSegmentIndex != null) {
+      return _activeAssistantSegmentIndex;
+    }
+    final ttsPending =
+        widget.controller.fishTtsEnabled && (_isReplying || _speechPreparing);
+    return ttsPending ? kSpeechPendingSegment : null;
+  }
+
   void _showAssistantSegment(int? index, Duration duration) {
+    _speechPreparing = false;
     if (!mounted ||
         (_activeAssistantSegmentIndex == index &&
             _activeSegmentDisplayDuration == duration)) {
@@ -6389,7 +6403,7 @@ class _ChatScreenState extends State<ChatScreen> {
               isContinuing: _isContinuing,
               isSuggestingReply: _isSuggestingReply,
               suggestionController: widget.controller,
-              activeAssistantSegmentIndex: _activeAssistantSegmentIndex,
+              activeAssistantSegmentIndex: _assistantSegmentRevealIndex,
               activeSegmentDisplayDuration: _activeSegmentDisplayDuration,
               latestAssistantMessageKey: _latestAssistantMessageKey,
               showScrollToBottomIndicator: _showScrollToBottomIndicator,
@@ -8033,6 +8047,23 @@ class _LiquidGlassConversation extends StatelessWidget {
   final bool expanded;
   final VoidCallback onToggleExpanded;
 
+  void _showHistorySheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.8,
+        child: _ConversationSheet(
+          messages: messages,
+          isReplying: isReplying,
+          language: language,
+          liquidGlass: liquidGlass,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Gaya referensi ryza_chat_mvp: bubble melayang transparan + input kaca,
@@ -8062,6 +8093,9 @@ class _LiquidGlassConversation extends StatelessWidget {
       onToggleCollection: isReplying || savingCollection
           ? null
           : onToggleCollection,
+      onOpenHistory: messages.isEmpty
+          ? null
+          : () => _showHistorySheet(context),
     );
     return LayoutBuilder(
       builder: (context, constraints) => Column(
@@ -8196,6 +8230,7 @@ class _ComposerTools {
     this.onReplay,
     this.onRegenerate,
     this.onToggleCollection,
+    this.onOpenHistory,
   });
 
   final AppController suggestionController;
@@ -8211,6 +8246,7 @@ class _ComposerTools {
   final VoidCallback? onReplay;
   final VoidCallback? onRegenerate;
   final VoidCallback? onToggleCollection;
+  final VoidCallback? onOpenHistory;
 
   bool get busy => isSuggesting || isContinuing || regeneratingSpeech;
 }
@@ -8687,9 +8723,23 @@ class _ChatBubble extends StatelessWidget {
   }
 }
 
-/// Baris ucapan karakter dalam bentuk bubble (avatar + nama + 1 bubble per
-/// segmen). Tetap mendukung tap-untuk-putar-suara dan mode "hanya terjemahan".
-class _BubbleSpeakerRun extends StatelessWidget {
+/// Sentinel: TTS untuk balasan ini sedang disiapkan, jadi teks Ryza belum
+/// boleh tampil sebelum audio segmennya mulai.
+const int kSpeechPendingSegment = -1;
+
+/// Batas tampil (indeks relatif run) untuk satu run Ryza. null = tampil semua.
+int? revealUpToForRun(int? reveal, int offset, int length) {
+  if (reveal == null) return null;
+  if (reveal == kSpeechPendingSegment) return -1;
+  if (reveal < offset) return length - 1;
+  if (reveal >= offset + length) return -1;
+  return reveal - offset;
+}
+
+/// Baris ucapan Ryza dalam bentuk bubble. Satu bubble tampil per halaman,
+/// bisa digeser kiri-kanan; indikator titik muncul hanya saat digeser.
+/// Bubble mengikuti audio: hanya segmen yang sudah mulai diputar yang tampil.
+class _BubbleSpeakerRun extends StatefulWidget {
   const _BubbleSpeakerRun({
     required this.name,
     required this.avatar,
@@ -8697,6 +8747,7 @@ class _BubbleSpeakerRun extends StatelessWidget {
     required this.translationOnly,
     this.onSpeechText,
     this.activeSegmentIndex,
+    this.revealUpTo,
   });
 
   final String name;
@@ -8705,21 +8756,152 @@ class _BubbleSpeakerRun extends StatelessWidget {
   final bool translationOnly;
   final ValueChanged<String>? onSpeechText;
   final int? activeSegmentIndex;
+  final int? revealUpTo;
+
+  @override
+  State<_BubbleSpeakerRun> createState() => _BubbleSpeakerRunState();
+}
+
+class _BubbleSpeakerRunState extends State<_BubbleSpeakerRun> {
+  int _page = 0;
+  int? _lastActive;
+  int? _lastReveal;
+  bool _dragging = false;
+  double _dragDx = 0;
+
+  bool _isRevealed(int i, int limit) {
+    if (limit < 0) return false;
+    if (i <= limit) return true;
+    // Terjemahan ikut tampil bersama aslinya (mode hanya-terjemahan).
+    return widget.segments[i].speaker == ChatSpeaker.translation &&
+        i - 1 <= limit;
+  }
+
+  List<int> _pages(BuildContext context) {
+    final appearance = Theme.of(context).extension<DialogueAppearance>();
+    final visible = dialogueDisplayIndices(
+      widget.segments,
+      widget.translationOnly || appearance?.translationOnly == true,
+    );
+    final limit = widget.revealUpTo;
+    if (limit == null) return visible;
+    return visible.where((i) => _isRevealed(i, limit)).toList();
+  }
+
+  int _targetPage(List<int> pages) {
+    final active = widget.activeSegmentIndex;
+    if (active == null || pages.isEmpty) return max(0, pages.length - 1);
+    var p = -1;
+    for (var k = 0; k < pages.length; k++) {
+      if (pages[k] <= active) p = k;
+    }
+    if (p < 0) return 0;
+    if (!pages.contains(active) &&
+        p + 1 < pages.length &&
+        pages[p + 1] == active + 1) {
+      p += 1;
+    }
+    return p;
+  }
+
+  void _syncPage(List<int> pages) {
+    if (_lastActive != widget.activeSegmentIndex ||
+        _lastReveal != widget.revealUpTo) {
+      _lastActive = widget.activeSegmentIndex;
+      _lastReveal = widget.revealUpTo;
+      _page = _targetPage(pages);
+    }
+    _page = _page.clamp(0, max(0, pages.length - 1));
+  }
+
+  void _onDragEnd(int count) {
+    var next = _page;
+    if (_dragDx < -40 && _page < count - 1) next = _page + 1;
+    if (_dragDx > 40 && _page > 0) next = _page - 1;
+    setState(() {
+      _dragging = false;
+      _dragDx = 0;
+      _page = next;
+    });
+  }
+
+  Widget _bubble(
+    int index,
+    DialogueAppearance? appearance,
+    bool onlyTranslation,
+    bool firstInGroup,
+  ) {
+    final segments = widget.segments;
+    final isTranslation = segments[index].speaker == ChatSpeaker.translation;
+    return GestureDetector(
+      onTap: widget.onSpeechText == null
+          ? null
+          : () {
+              final original = segments
+                  .take(index + 1)
+                  .where((s) => s.speaker == segments.first.speaker)
+                  .lastOrNull;
+              if (original != null) {
+                widget.onSpeechText!(displayTextForAssistantSegment(original));
+              }
+            },
+      child: _ChatBubble(
+        firstInGroup: firstInGroup,
+        active: widget.activeSegmentIndex == index,
+        subtle: !onlyTranslation && isTranslation,
+        child: Text(
+          displayTextForAssistantSegment(segments[index]),
+          style: TextStyle(
+            color: !onlyTranslation && isTranslation
+                ? Colors.white70
+                : (appearance?.textColor ?? Colors.white),
+            fontSize: !onlyTranslation && isTranslation ? 13 : 14,
+            height: 1.38,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dots(int count) => AnimatedOpacity(
+    duration: const Duration(milliseconds: 160),
+    opacity: _dragging && count > 1 ? 1 : 0,
+    child: Padding(
+      padding: const EdgeInsets.only(top: 6, left: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var k = 0; k < count; k++)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                '•',
+                style: TextStyle(
+                  color: k == _page ? Colors.white : Colors.white38,
+                  fontSize: k == _page ? 14 : 11,
+                  height: 1,
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
     final appearance = Theme.of(context).extension<DialogueAppearance>();
-    final visible = dialogueDisplayIndices(
-      segments,
-      translationOnly || appearance?.translationOnly == true,
+    final pages = _pages(context);
+    if (pages.isEmpty) return const SizedBox.shrink();
+    _syncPage(pages);
+    final onlyTranslation = pages.every(
+      (i) => widget.segments[i].speaker == ChatSpeaker.translation,
     );
-    final onlyTranslation =
-        visible.isNotEmpty &&
-        visible.every((i) => segments[i].speaker == ChatSpeaker.translation);
+    final index = pages[_page];
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        avatar,
+        widget.avatar,
         const SizedBox(width: 8),
         Expanded(
           child: Padding(
@@ -8729,56 +8911,39 @@ class _BubbleSpeakerRun extends StatelessWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.only(left: 4, bottom: 3),
-                  child: Text(name, style: _bubbleNameStyle),
+                  child: Text(widget.name, style: _bubbleNameStyle),
                 ),
-                for (final index in visible) ...[
-                  if (index != visible.first) const SizedBox(height: 4),
-                  Align(
+                GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragStart: (_) => setState(() {
+                    _dragging = true;
+                    _dragDx = 0;
+                  }),
+                  onHorizontalDragUpdate: (d) => _dragDx += d.delta.dx,
+                  onHorizontalDragEnd: (_) => _onDragEnd(pages.length),
+                  onHorizontalDragCancel: () => setState(() {
+                    _dragging = false;
+                    _dragDx = 0;
+                  }),
+                  child: Align(
                     alignment: Alignment.centerLeft,
-                    child: GestureDetector(
-                      onTap: onSpeechText == null
-                          ? null
-                          : () {
-                              final original = segments
-                                  .take(index + 1)
-                                  .where(
-                                    (s) => s.speaker == segments.first.speaker,
-                                  )
-                                  .lastOrNull;
-                              if (original != null) {
-                                onSpeechText!(
-                                  displayTextForAssistantSegment(original),
-                                );
-                              }
-                            },
-                      child: _ChatBubble(
-                        firstInGroup: index == visible.first,
-                        active: activeSegmentIndex == index,
-                        subtle:
-                            !onlyTranslation &&
-                            segments[index].speaker == ChatSpeaker.translation,
-                        child: Text(
-                          displayTextForAssistantSegment(segments[index]),
-                          style: TextStyle(
-                            color:
-                                !onlyTranslation &&
-                                    segments[index].speaker ==
-                                        ChatSpeaker.translation
-                                ? Colors.white70
-                                : (appearance?.textColor ?? Colors.white),
-                            fontSize:
-                                !onlyTranslation &&
-                                    segments[index].speaker ==
-                                        ChatSpeaker.translation
-                                ? 13
-                                : 14,
-                            height: 1.38,
-                          ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      transitionBuilder: (child, anim) =>
+                          FadeTransition(opacity: anim, child: child),
+                      child: KeyedSubtree(
+                        key: ValueKey(index),
+                        child: _bubble(
+                          index,
+                          appearance,
+                          onlyTranslation,
+                          index == pages.first,
                         ),
                       ),
                     ),
                   ),
-                ],
+                ),
+                _dots(pages.length),
               ],
             ),
           ),
@@ -8955,6 +9120,11 @@ class _SeparatedAssistantMessage extends StatelessWidget {
         );
       } else {
         final ryzaRun = _RyzaRun(
+              revealUpTo: revealUpToForRun(
+                activeSegmentIndex,
+                segmentOffset,
+                run.length,
+              ),
               bubble: bubble,
               characterProfile:
                   characterProfile ??
@@ -9114,10 +9284,12 @@ class _RyzaRun extends StatelessWidget {
     this.translationOnly = false,
     this.activeSegmentIndex,
     this.activeSegmentDisplayDuration = Duration.zero,
+    this.revealUpTo,
   });
 
   final List<ChatSegment> segments;
   final CharacterRuntimeProfile characterProfile;
+  final int? revealUpTo;
   final ValueChanged<String>? onSpeechText;
   final AppLanguage language;
   final bool glass;
@@ -9167,6 +9339,7 @@ class _RyzaRun extends StatelessWidget {
         translationOnly: translationOnly,
         onSpeechText: onSpeechText,
         activeSegmentIndex: activeSegmentIndex,
+        revealUpTo: revealUpTo,
       );
     }
     return Row(
@@ -10047,22 +10220,11 @@ class _AttachmentMenuButtonState extends State<_AttachmentMenuButton> {
               children: [
                 _AttachmentMenuOption(
                   liquidGlass: widget.liquidGlass,
-                  icon: Icons.checklist_rounded,
-                  label: language.text('多选', 'Select', '選択'),
-                  onPressed: tools.onToggleCollection == null
+                  icon: Icons.history_rounded,
+                  label: language.text('对话记录', 'History', '会話履歴'),
+                  onPressed: tools.onOpenHistory == null
                       ? null
-                      : () => _select(tools.onToggleCollection!),
-                ),
-                const SizedBox(height: 6),
-                _AttachmentMenuOption(
-                  liquidGlass: widget.liquidGlass,
-                  icon: tools.conversationFullscreen
-                      ? Icons.fullscreen_exit_rounded
-                      : Icons.fullscreen_rounded,
-                  label: tools.conversationFullscreen
-                      ? language.text('退出全屏', 'Exit full', '全画面終了')
-                      : language.text('全屏对话', 'Fullscreen', '全画面'),
-                  onPressed: () => _select(tools.onToggleFullscreen),
+                      : () => _select(tools.onOpenHistory!),
                 ),
                 const SizedBox(height: 6),
                 _AttachmentMenuOption(
