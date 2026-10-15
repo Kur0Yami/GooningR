@@ -1134,12 +1134,15 @@ class AppController extends ChangeNotifier {
   AppAccentTheme? textColorTheme;
   AppTextColor textColorChoice = AppTextColor.theme;
   double dialogueFontScale = 1.0;
-  bool translationOnly = false;
+  // Default: teks tampil Indonesia (terjemahan), suara tetap Jepang (teks asli).
+  bool translationOnly = true;
   bool independentTranslation = true;
   AppLanguage interfaceLanguage = AppLanguage.chinese;
   AppLanguage narratorLanguage = AppLanguage.indonesian;
-  AppLanguage characterReplyLanguage = AppLanguage.indonesian;
-  TranslationLanguage translationLanguage = TranslationLanguage.none;
+  // Bahasa ASLI ucapan karakter = bahasa suara TTS. Teks yang tampil diambil
+  // dari terjemahan (translationLanguage), jadi suara tetap Jepang.
+  AppLanguage characterReplyLanguage = AppLanguage.japanese;
+  TranslationLanguage translationLanguage = TranslationLanguage.indonesian;
   AppLanguage? _npcReplyLanguageOverride;
   TranslationLanguage? _npcTranslationLanguageOverride;
 
@@ -1508,7 +1511,7 @@ class AppController extends ChangeNotifier {
       (value) => value.name == _preferences.getString('frame_rate_mode'),
       orElse: () => AppFrameRateMode.adaptive,
     );
-    translationOnly = _preferences.getBool('translation_only') ?? false;
+    translationOnly = _preferences.getBool('translation_only') ?? true;
     independentTranslation =
         _preferences.getBool('independent_translation') ?? true;
     preferCustomUserProfile =
@@ -1543,12 +1546,28 @@ class AppController extends ChangeNotifier {
     characterReplyLanguage = AppLanguage.values.firstWhere(
       (value) =>
           value.name == _preferences.getString('character_reply_language'),
-      orElse: () => AppLanguage.indonesian,
+      orElse: () => AppLanguage.japanese,
     );
     translationLanguage = TranslationLanguage.values.firstWhere(
       (value) => value.name == _preferences.getString('translation_language'),
-      orElse: () => TranslationLanguage.none,
+      orElse: () => TranslationLanguage.indonesian,
     );
+    // Migrasi sekali: preferensi lama (balasan Indonesia, tanpa terjemahan)
+    // membuat TTS membaca teks Indonesia. Ubah ke: suara Jepang + teks Indonesia.
+    if (_preferences.getBool('voice_jp_text_id_migrated') != true) {
+      if (characterReplyLanguage == AppLanguage.indonesian &&
+          translationLanguage == TranslationLanguage.none) {
+        characterReplyLanguage = AppLanguage.japanese;
+        translationLanguage = TranslationLanguage.indonesian;
+        translationOnly = true;
+        independentTranslation = true;
+        unawaited(_preferences.setString('character_reply_language', 'japanese'));
+        unawaited(_preferences.setString('translation_language', 'indonesian'));
+        unawaited(_preferences.setBool('translation_only', true));
+        unawaited(_preferences.setBool('independent_translation', true));
+      }
+      unawaited(_preferences.setBool('voice_jp_text_id_migrated', true));
+    }
     _npcReplyLanguageOverride = AppLanguage.values
         .where(
           (value) =>
@@ -4686,7 +4705,7 @@ $japanesePunctuationRule
       (value) => value.name == data['themePreference'],
       orElse: () => AppThemePreference.system,
     );
-    translationOnly = data['translationOnly'] == true;
+    translationOnly = data['translationOnly'] != false;
     independentTranslation = data['independentTranslation'] != false;
     narratorEnabled = data['narratorEnabled'] != false;
     characterZoom = ((data['characterZoom'] as num?)?.toDouble() ?? 1.25)
@@ -4728,11 +4747,11 @@ $japanesePunctuationRule
     );
     characterReplyLanguage = AppLanguage.values.firstWhere(
       (value) => value.name == data['characterReplyLanguage'],
-      orElse: () => AppLanguage.indonesian,
+      orElse: () => AppLanguage.japanese,
     );
     translationLanguage = TranslationLanguage.values.firstWhere(
       (value) => value.name == data['translationLanguage'],
-      orElse: () => TranslationLanguage.none,
+      orElse: () => TranslationLanguage.indonesian,
     );
     _npcReplyLanguageOverride = AppLanguage.values
         .where((value) => value.name == data['npcReplyLanguageOverride'])

@@ -3549,6 +3549,28 @@ class _LanguageSettingsDialogState extends State<_LanguageSettingsDialog> {
               ),
               Align(
                 alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() {
+                    // Suara = bahasa asli (Jepang); teks tampil = terjemahan Indonesia.
+                    _narratorLanguage = AppLanguage.indonesian;
+                    _characterReplyLanguage = AppLanguage.japanese;
+                    _translationLanguage = TranslationLanguage.indonesian;
+                    _translationOnly = true;
+                    _independentTranslation = true;
+                  }),
+                  icon: const Icon(Icons.record_voice_over_rounded, size: 18),
+                  label: Text(
+                    language.text(
+                      '印尼语文字 + 日语语音',
+                      'Indonesian text + Japanese voice',
+                      '文字はインドネシア語＋音声は日本語',
+                      indonesian: 'Teks Indonesia + suara Jepang',
+                    ),
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
                 child: Text(
                   language.text(
                     '选择是否将${widget.characterNames.chinese}的回复额外翻译为指定语言；不影响原始回复语言。语言设置仅对保存后发送的新消息生效，历史消息不会重新翻译。',

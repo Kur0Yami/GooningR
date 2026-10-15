@@ -8035,19 +8035,15 @@ class _LiquidGlassConversation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Gaya bubble melayang (seperti src): bubble pertukaran terakhir mengambang
+    // di atas karakter; kaca hanya membungkus toolbar + composer di bawah.
     return LayoutBuilder(
-      builder: (context, constraints) => Stack(
-        clipBehavior: Clip.none,
+      builder: (context, constraints) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Positioned.fill(
-            top: 18,
-            child: _LiquidGlassSurface(
-              liquidGlass: liquidGlass,
-              child: Column(
-                children: [
-                  Expanded(
-                    child: Stack(
-                      children: [
+          Expanded(
+            child: Stack(
+              children: [
                         Positioned.fill(
                           child: MediaQuery(
                             data: MediaQuery.of(context).copyWith(
@@ -8079,6 +8075,9 @@ class _LiquidGlassConversation extends StatelessWidget {
                               latestAssistantMessageKey:
                                   latestAssistantMessageKey,
                               translationOnly: translationOnly,
+                              isReplying: isReplying,
+                              showAll:
+                                  selectingCollection || conversationFullscreen,
                             ),
                           ),
                         ),
@@ -8090,14 +8089,20 @@ class _LiquidGlassConversation extends StatelessWidget {
                               onPressed: onScrollToBottom,
                             ),
                           ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    height: 1,
-                    color: Colors.white.withValues(alpha: 0.2),
-                  ),
-                  speechProgress,
+              ],
+            ),
+          ),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 18),
+                child: _LiquidGlassSurface(
+                  liquidGlass: liquidGlass,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      speechProgress,
                   ConstrainedBox(
                     constraints: BoxConstraints(
                       maxHeight: min(
@@ -8138,10 +8143,10 @@ class _LiquidGlassConversation extends StatelessWidget {
                       ),
                     ),
                   ),
-                ],
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ),
           Positioned(
             left: 12,
             right: showFullscreenButton ? 116 : 64,
@@ -8281,6 +8286,8 @@ class _LiquidGlassConversation extends StatelessWidget {
                 onPressed: onToggleFullscreen,
               ),
             ),
+            ],
+          ),
         ],
       ),
     );
@@ -8336,6 +8343,27 @@ class _GlassDragHandle extends StatelessWidget {
   }
 }
 
+const _bubbleNameStyle = TextStyle(
+  color: Colors.white70,
+  fontSize: 11,
+  fontWeight: FontWeight.w600,
+  shadows: [
+    Shadow(color: Color(0x99000000), blurRadius: 3, offset: Offset(0, 1)),
+  ],
+);
+
+/// Yang melayang di layar hanya pertukaran terakhir (pesan user + balasan);
+/// sisanya bisa dilihat lewat mode layar penuh / pilih-banyak.
+List<ChatMessage> _recentBubbleMessages(List<ChatMessage> messages) {
+  if (messages.isEmpty) return const [];
+  final last = messages.last;
+  if (last.isUser) return [last];
+  if (messages.length > 1 && messages[messages.length - 2].isUser) {
+    return [messages[messages.length - 2], last];
+  }
+  return [last];
+}
+
 class _GlassMessageList extends StatelessWidget {
   const _GlassMessageList({
     required this.characterProfile,
@@ -8351,6 +8379,8 @@ class _GlassMessageList extends StatelessWidget {
     required this.activeSegmentDisplayDuration,
     required this.latestAssistantMessageKey,
     required this.translationOnly,
+    this.isReplying = false,
+    this.showAll = false,
   });
 
   final AppLanguage language;
@@ -8367,154 +8397,68 @@ class _GlassMessageList extends StatelessWidget {
   final Set<String> availableVoices;
   final void Function(String, String, bool)? onSelectionChanged;
 
+  /// Balasan sedang dibuat: tampilkan indikator mengetik di bawah pesan user.
+  final bool isReplying;
+
+  /// true: seluruh riwayat (layar penuh / pilih-banyak). false: bubble
+  /// melayang berisi pertukaran terakhir saja.
+  final bool showAll;
+
   @override
   Widget build(BuildContext context) {
-    final visibleMessages = messages
+    final nonEmpty = messages
         .where((message) => message.text.trim().isNotEmpty)
         .toList(growable: false);
-    return ListView.separated(
+    final visible = showAll ? nonEmpty : _recentBubbleMessages(nonEmpty);
+    final showTyping =
+        !showAll && isReplying && (visible.isEmpty || visible.last.isUser);
+    final list = ListView.builder(
       controller: controller,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(14, 32, 14, 8),
-      itemCount: visibleMessages.length,
-      separatorBuilder: (_, _) =>
-          Divider(height: 1, color: Colors.white.withValues(alpha: 0.2)),
+      shrinkWrap: !showAll,
+      padding: showAll
+          ? const EdgeInsets.fromLTRB(12, 32, 12, 8)
+          : const EdgeInsets.fromLTRB(2, 4, 2, 6),
+      itemCount: visible.length + (showTyping ? 1 : 0),
       itemBuilder: (context, index) {
-        final messageIndex = visibleMessages.length - 1 - index;
-        final message = visibleMessages[messageIndex];
-        Widget buildMessage() {
-          if (!message.isUser) {
-            return Padding(
-              key: index == 0 ? latestAssistantMessageKey : null,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: _SeparatedAssistantMessage(
-                characterProfile: characterProfile,
-                onSpeechText: selecting
-                    ? null
-                    : (text, speaker) => onPlaySpeech(message, text, speaker),
-                response: message.displayText,
-                translationOnly: translationOnly,
-                language: language,
-                attachments: message.attachments,
-                glass: true,
-                activeSegmentIndex: index == 0
-                    ? activeAssistantSegmentIndex
-                    : null,
-                activeSegmentDisplayDuration: activeSegmentDisplayDuration,
-              ),
-            );
-          }
-          final userParts = parseUserComposerParts(message.text);
-          final avatar = Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white.withValues(alpha: 0.16),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
-            ),
-            child: Icon(
-              Icons.person_outline_rounded,
-              size: 16,
-              color: Colors.white,
-            ),
-          );
-          final body = Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  language.text('你', 'You', 'あなた'),
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                if (userParts.speech.isNotEmpty)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 9,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.20),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.30),
-                        ),
-                        // "Ekor" bubble di kanan atas, mengarah ke nama di atasnya.
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(16),
-                          topRight: Radius.circular(4),
-                          bottomLeft: Radius.circular(16),
-                          bottomRight: Radius.circular(16),
-                        ),
-                      ),
-                      child: _UserComposerBody(
-                        text: userParts.speech,
-                        glass: true,
-                      ),
-                    ),
-                  ),
-                if (message.attachments.isNotEmpty) ...[
-                  const SizedBox(height: 7),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _SentAttachmentLabels(
-                      attachments: message.attachments,
-                      glass: true,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          );
+        if (showTyping && index == 0) {
           return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (userParts.narration.isNotEmpty)
-                  _NarratorRun(
-                    segments: [
-                      ChatSegment(
-                        speaker: ChatSpeaker.narrator,
-                        text: userParts.narration,
-                      ),
-                    ],
-                    glass: true,
-                  ),
-                if (userParts.narration.isNotEmpty &&
-                    userParts.speech.isNotEmpty)
-                  const SizedBox(height: 10),
-                if (userParts.speech.isNotEmpty ||
-                    message.attachments.isNotEmpty)
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [body, const SizedBox(width: 10), avatar],
-                  ),
-                if (userParts.bottomNarration.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  _NarratorRun(
-                    segments: [
-                      ChatSegment(
-                        speaker: ChatSpeaker.narrator,
-                        text: userParts.bottomNarration,
-                      ),
-                    ],
-                    glass: true,
-                  ),
-                ],
-              ],
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: _TypingBubble(
+              language: language,
+              characterProfile: characterProfile,
             ),
           );
         }
-
-        final content = buildMessage();
+        final newestFirst = showTyping ? index - 1 : index;
+        final message = visible[visible.length - 1 - newestFirst];
+        final isNewest = newestFirst == 0;
+        final Widget content;
+        if (!message.isUser) {
+          content = Padding(
+            key: isNewest ? latestAssistantMessageKey : null,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: _SeparatedAssistantMessage(
+              characterProfile: characterProfile,
+              onSpeechText: selecting
+                  ? null
+                  : (text, speaker) => onPlaySpeech(message, text, speaker),
+              response: message.displayText,
+              translationOnly: translationOnly,
+              language: language,
+              attachments: message.attachments,
+              glass: true,
+              bubble: true,
+              activeSegmentIndex: isNewest ? activeAssistantSegmentIndex : null,
+              activeSegmentDisplayDuration: activeSegmentDisplayDuration,
+            ),
+          );
+        } else {
+          content = Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: _UserBubbleMessage(message: message, language: language),
+          );
+        }
         return SwipeCollectionSelection(
           key: ValueKey(message.collectionKey),
           selected:
@@ -8536,6 +8480,438 @@ class _GlassMessageList extends StatelessWidget {
           child: content,
         );
       },
+    );
+    if (showAll) {
+      return ColoredBox(
+        color: Colors.black.withValues(alpha: 0.30),
+        child: list,
+      );
+    }
+    // Bottom-anchored & hanya setinggi isinya, jadi area kosong di atas bubble
+    // tidak menghalangi tap ke karakter.
+    return Align(alignment: Alignment.bottomCenter, child: list);
+  }
+}
+
+/// Bubble user di kanan (gradien warna aksen) + avatar, mengikuti src.
+class _UserBubbleMessage extends StatelessWidget {
+  const _UserBubbleMessage({required this.message, required this.language});
+
+  final ChatMessage message;
+  final AppLanguage language;
+
+  @override
+  Widget build(BuildContext context) {
+    final userParts = parseUserComposerParts(message.text);
+    final hasBubble =
+        userParts.speech.isNotEmpty || message.attachments.isNotEmpty;
+    final plainSpeech = !RegExp(
+      r'^\s*(旁白|发言)\s*[：:]',
+      multiLine: true,
+    ).hasMatch(userParts.speech);
+    final avatar = Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white.withValues(alpha: 0.16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
+      ),
+      child: const Icon(
+        Icons.person_outline_rounded,
+        size: 16,
+        color: Colors.white,
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (userParts.narration.isNotEmpty)
+          _NarratorRun(
+            segments: [
+              ChatSegment(
+                speaker: ChatSpeaker.narrator,
+                text: userParts.narration,
+              ),
+            ],
+            glass: true,
+            bubble: true,
+          ),
+        if (userParts.narration.isNotEmpty && hasBubble)
+          const SizedBox(height: 8),
+        if (hasBubble)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 22),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4, bottom: 3),
+                        child: Text(
+                          language.text(
+                            '你',
+                            'You',
+                            'あなた',
+                            indonesian: 'Kamu',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: _bubbleNameStyle,
+                        ),
+                      ),
+                      if (userParts.speech.isNotEmpty)
+                        _ChatBubble(
+                          isUser: true,
+                          child: plainSpeech
+                              ? Text(
+                                  userParts.speech,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    height: 1.38,
+                                  ),
+                                )
+                              : _UserComposerBody(
+                                  text: userParts.speech,
+                                  glass: true,
+                                ),
+                        ),
+                      if (message.attachments.isNotEmpty) ...[
+                        const SizedBox(height: 7),
+                        _SentAttachmentLabels(
+                          attachments: message.attachments,
+                          glass: true,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              avatar,
+            ],
+          ),
+        if (userParts.bottomNarration.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _NarratorRun(
+            segments: [
+              ChatSegment(
+                speaker: ChatSpeaker.narrator,
+                text: userParts.bottomNarration,
+              ),
+            ],
+            glass: true,
+            bubble: true,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Avatar bulat 28px untuk karakter aktif (dipakai bubble & indikator mengetik).
+class _CharacterBubbleAvatar extends StatelessWidget {
+  const _CharacterBubbleAvatar({required this.characterProfile});
+
+  final CharacterRuntimeProfile characterProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white.withValues(alpha: 0.16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Image.asset(
+        characterProfile.id == CharacterRuntimeIds.ryza
+            ? 'assets/images/chara_icons/ryza.png'
+            : characterProfile.switchAsset,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => const Icon(
+          Icons.person_outline_rounded,
+          size: 16,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+}
+
+class _TypingBubble extends StatefulWidget {
+  const _TypingBubble({required this.language, required this.characterProfile});
+
+  final AppLanguage language;
+  final CharacterRuntimeProfile characterProfile;
+
+  @override
+  State<_TypingBubble> createState() => _TypingBubbleState();
+}
+
+class _TypingBubbleState extends State<_TypingBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final names = widget.characterProfile.names;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _CharacterBubbleAvatar(characterProfile: widget.characterProfile),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 3),
+              child: Text(
+                widget.language.text(
+                  names.chinese,
+                  names.english,
+                  names.japanese,
+                ),
+                style: _bubbleNameStyle,
+              ),
+            ),
+            _ChatBubble(
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < 3; i++) ...[
+                      if (i > 0) const SizedBox(width: 4),
+                      Opacity(
+                        opacity:
+                            0.35 +
+                            0.65 *
+                                (0.5 +
+                                    0.5 *
+                                        sin(
+                                          2 * pi * (_controller.value - i * 0.15),
+                                        )),
+                        child: Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Bubble chat ala live VTuber: bubble user di kanan (warna aksen), bubble
+/// karakter di kiri (kaca gelap), bubble yang sedang diucapkan diberi glow.
+class _ChatBubble extends StatelessWidget {
+  const _ChatBubble({
+    required this.child,
+    this.isUser = false,
+    this.active = false,
+    this.subtle = false,
+    this.firstInGroup = true,
+  });
+
+  final Widget child;
+  final bool isUser;
+  final bool active;
+  final bool subtle;
+  final bool firstInGroup;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    const big = Radius.circular(18);
+    const tail = Radius.circular(5);
+    final radius = isUser
+        ? const BorderRadius.only(
+            topLeft: big,
+            topRight: tail,
+            bottomLeft: big,
+            bottomRight: big,
+          )
+        : BorderRadius.only(
+            topLeft: firstInGroup ? tail : big,
+            topRight: big,
+            bottomLeft: big,
+            bottomRight: big,
+          );
+    final decoration = isUser
+        ? BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color.lerp(accent, Colors.white, 0.12)!.withValues(alpha: 0.95),
+                accent.withValues(alpha: 0.95),
+              ],
+            ),
+            borderRadius: radius,
+            border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
+            boxShadow: [
+              BoxShadow(
+                color: accent.withValues(alpha: 0.28),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          )
+        : BoxDecoration(
+            color: const Color(
+              0xFF16181B,
+            ).withValues(alpha: subtle ? 0.42 : 0.62),
+            borderRadius: radius,
+            border: Border.all(
+              color: active
+                  ? accent.withValues(alpha: 0.95)
+                  : Colors.white.withValues(alpha: 0.24),
+              width: active ? 1.4 : 1,
+            ),
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                    ),
+                  ]
+                : const [],
+          );
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+      decoration: decoration,
+      child: child,
+    );
+  }
+}
+
+/// Baris ucapan karakter dalam bentuk bubble (avatar + nama + 1 bubble per
+/// segmen). Tetap mendukung tap-untuk-putar-suara dan mode "hanya terjemahan".
+class _BubbleSpeakerRun extends StatelessWidget {
+  const _BubbleSpeakerRun({
+    required this.name,
+    required this.avatar,
+    required this.segments,
+    required this.translationOnly,
+    this.onSpeechText,
+    this.activeSegmentIndex,
+  });
+
+  final String name;
+  final Widget avatar;
+  final List<ChatSegment> segments;
+  final bool translationOnly;
+  final ValueChanged<String>? onSpeechText;
+  final int? activeSegmentIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    final appearance = Theme.of(context).extension<DialogueAppearance>();
+    final visible = dialogueDisplayIndices(
+      segments,
+      translationOnly || appearance?.translationOnly == true,
+    );
+    final onlyTranslation =
+        visible.isNotEmpty &&
+        visible.every((i) => segments[i].speaker == ChatSpeaker.translation);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        avatar,
+        const SizedBox(width: 8),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(right: 22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 3),
+                  child: Text(name, style: _bubbleNameStyle),
+                ),
+                for (final index in visible) ...[
+                  if (index != visible.first) const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: GestureDetector(
+                      onTap: onSpeechText == null
+                          ? null
+                          : () {
+                              final original = segments
+                                  .take(index + 1)
+                                  .where(
+                                    (s) => s.speaker == segments.first.speaker,
+                                  )
+                                  .lastOrNull;
+                              if (original != null) {
+                                onSpeechText!(
+                                  displayTextForAssistantSegment(original),
+                                );
+                              }
+                            },
+                      child: _ChatBubble(
+                        firstInGroup: index == visible.first,
+                        active: activeSegmentIndex == index,
+                        subtle:
+                            !onlyTranslation &&
+                            segments[index].speaker == ChatSpeaker.translation,
+                        child: Text(
+                          displayTextForAssistantSegment(segments[index]),
+                          style: TextStyle(
+                            color:
+                                !onlyTranslation &&
+                                    segments[index].speaker ==
+                                        ChatSpeaker.translation
+                                ? Colors.white70
+                                : (appearance?.textColor ?? Colors.white),
+                            fontSize:
+                                !onlyTranslation &&
+                                    segments[index].speaker ==
+                                        ChatSpeaker.translation
+                                ? 13
+                                : 14,
+                            height: 1.38,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -8638,6 +9014,7 @@ class _SeparatedAssistantMessage extends StatelessWidget {
     this.characterProfile,
     required this.attachments,
     required this.glass,
+    this.bubble = false,
     this.activeSegmentIndex,
     this.activeSegmentDisplayDuration = Duration.zero,
   });
@@ -8649,6 +9026,7 @@ class _SeparatedAssistantMessage extends StatelessWidget {
   final CharacterRuntimeProfile? characterProfile;
   final List<ChatAttachment> attachments;
   final bool glass;
+  final bool bubble;
   final int? activeSegmentIndex;
   final Duration activeSegmentDisplayDuration;
 
@@ -8668,21 +9046,20 @@ class _SeparatedAssistantMessage extends StatelessWidget {
               activeSegmentIndex! < segmentOffset + run.length
           ? activeSegmentIndex! - segmentOffset
           : null;
-      if (index > 0) children.add(const SizedBox(height: 10));
+      if (index > 0) children.add(SizedBox(height: bubble ? 8 : 10));
       if (run.first.speaker == ChatSpeaker.narrator) {
         children.add(
           _NarratorRun(
             segments: run,
             glass: glass,
+            bubble: bubble,
             activeSegmentIndex: activeInRun,
             activeSegmentDisplayDuration: activeSegmentDisplayDuration,
           ),
         );
       } else if (run.first.speaker == ChatSpeaker.character) {
-        children.add(
-          _dialogueBubble(
-            context,
-            _CharacterRun(
+        final characterRun = _CharacterRun(
+              bubble: bubble,
               segments: run,
               primaryCharacterId:
                   characterProfile?.id ?? CharacterRuntimeIds.ryza,
@@ -8700,14 +9077,13 @@ class _SeparatedAssistantMessage extends StatelessWidget {
               translationOnly: translationOnly,
               activeSegmentIndex: activeInRun,
               activeSegmentDisplayDuration: activeSegmentDisplayDuration,
-            ),
-          ),
+            );
+        children.add(
+          bubble ? characterRun : _dialogueBubble(context, characterRun),
         );
       } else {
-        children.add(
-          _dialogueBubble(
-            context,
-            _RyzaRun(
+        final ryzaRun = _RyzaRun(
+              bubble: bubble,
               characterProfile:
                   characterProfile ??
                   characterRuntimeProfileById(CharacterRuntimeIds.ryza),
@@ -8720,9 +9096,8 @@ class _SeparatedAssistantMessage extends StatelessWidget {
               translationOnly: translationOnly,
               activeSegmentIndex: activeInRun,
               activeSegmentDisplayDuration: activeSegmentDisplayDuration,
-            ),
-          ),
-        );
+            );
+        children.add(bubble ? ryzaRun : _dialogueBubble(context, ryzaRun));
       }
       segmentOffset += run.length;
     }
@@ -8732,7 +9107,10 @@ class _SeparatedAssistantMessage extends StatelessWidget {
         ...children,
         if (attachments.isNotEmpty) ...[
           const SizedBox(height: 7),
-          _SentAttachmentLabels(attachments: attachments, glass: glass),
+          Padding(
+            padding: EdgeInsets.only(left: bubble ? 36 : 0),
+            child: _SentAttachmentLabels(attachments: attachments, glass: glass),
+          ),
         ],
       ],
     );
@@ -8769,17 +9147,51 @@ class _NarratorRun extends StatelessWidget {
   const _NarratorRun({
     required this.segments,
     required this.glass,
+    this.bubble = false,
     this.activeSegmentIndex,
     this.activeSegmentDisplayDuration = Duration.zero,
   });
 
   final List<ChatSegment> segments;
   final bool glass;
+  final bool bubble;
   final int? activeSegmentIndex;
   final Duration activeSegmentDisplayDuration;
 
   @override
   Widget build(BuildContext context) {
+    if (bubble) {
+      // Narasi: pil gelap di tengah, miring (italic), seperti src.
+      return Align(
+        alignment: Alignment.center,
+        child: _AutoVisibleDialogueSegment(
+          active: activeSegmentIndex != null,
+          displayDuration: activeSegmentDisplayDuration,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.38),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+            ),
+            child: Text(
+              segments.map(displayTextForAssistantSegment).join('\n'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color:
+                    Theme.of(context)
+                        .extension<DialogueAppearance>()
+                        ?.textColor ??
+                    Colors.white70,
+                fontSize: 12.5,
+                fontStyle: FontStyle.italic,
+                height: 1.36,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -8826,6 +9238,7 @@ class _RyzaRun extends StatelessWidget {
     required this.segments,
     required this.language,
     required this.glass,
+    this.bubble = false,
     this.translationOnly = false,
     this.activeSegmentIndex,
     this.activeSegmentDisplayDuration = Duration.zero,
@@ -8836,6 +9249,7 @@ class _RyzaRun extends StatelessWidget {
   final ValueChanged<String>? onSpeechText;
   final AppLanguage language;
   final bool glass;
+  final bool bubble;
   final bool translationOnly;
   final int? activeSegmentIndex;
   final Duration activeSegmentDisplayDuration;
@@ -8869,6 +9283,20 @@ class _RyzaRun extends StatelessWidget {
         ),
       ),
     );
+    if (bubble) {
+      return _BubbleSpeakerRun(
+        name: language.text(
+          characterProfile.names.chinese,
+          characterProfile.names.english,
+          characterProfile.names.japanese,
+        ),
+        avatar: avatar,
+        segments: segments,
+        translationOnly: translationOnly,
+        onSpeechText: onSpeechText,
+        activeSegmentIndex: activeSegmentIndex,
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -8916,6 +9344,7 @@ class _CharacterRun extends StatelessWidget {
     this.onSpeechText,
     required this.language,
     required this.glass,
+    this.bubble = false,
     this.translationOnly = false,
     this.activeSegmentIndex,
     this.activeSegmentDisplayDuration = Duration.zero,
@@ -8926,6 +9355,7 @@ class _CharacterRun extends StatelessWidget {
   final ValueChanged<String>? onSpeechText;
   final AppLanguage language;
   final bool glass;
+  final bool bubble;
   final bool translationOnly;
   final int? activeSegmentIndex;
   final Duration activeSegmentDisplayDuration;
@@ -8988,6 +9418,16 @@ class _CharacterRun extends StatelessWidget {
               ),
             ),
     );
+    if (bubble) {
+      return _BubbleSpeakerRun(
+        name: name,
+        avatar: avatar,
+        segments: segments,
+        translationOnly: translationOnly,
+        onSpeechText: onSpeechText,
+        activeSegmentIndex: activeSegmentIndex,
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
