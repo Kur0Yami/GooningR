@@ -8035,8 +8035,34 @@ class _LiquidGlassConversation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Gaya bubble melayang (seperti src): bubble pertukaran terakhir mengambang
-    // di atas karakter; kaca hanya membungkus toolbar + composer di bawah.
+    // Gaya referensi ryza_chat_mvp: bubble melayang transparan + input kaca,
+    // tanpa panel gelap. Semua tombol alat pindah ke menu "+".
+    final tools = _ComposerTools(
+      suggestionController: suggestionController,
+      isSuggesting: isSuggestingReply,
+      isContinuing: isContinuing,
+      regeneratingSpeech: regeneratingSpeech,
+      selectingCollection: selectingCollection,
+      conversationFullscreen: conversationFullscreen,
+      onToggleFullscreen: onToggleFullscreen,
+      onSuggest: !isReplying && !selectingCollection && !isSuggestingReply
+          ? onSuggestReply
+          : null,
+      onUndo: canUndo && !selectingCollection ? onUndo : null,
+      onContinue: canContinue && !isContinuing && !selectingCollection
+          ? onContinue
+          : null,
+      onReplay: canReplay && !selectingCollection ? onReplay : null,
+      onRegenerate:
+          !isReplying &&
+              !selectingCollection &&
+              messages.any((m) => !m.isUser && m.text.trim().isNotEmpty)
+          ? onRegenerateSpeech
+          : null,
+      onToggleCollection: isReplying || savingCollection
+          ? null
+          : onToggleCollection,
+    );
     return LayoutBuilder(
       builder: (context, constraints) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -8092,255 +8118,101 @@ class _LiquidGlassConversation extends StatelessWidget {
               ],
             ),
           ),
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 18),
-                child: _LiquidGlassSurface(
+          if (selectingCollection)
+            // Mode pilih-banyak: composer disembunyikan, sisakan tombol simpan.
+            SafeArea(
+              top: false,
+              bottom: false,
+              minimum: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: _AttachmentMenuOption(
                   liquidGlass: liquidGlass,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      speechProgress,
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: min(
-                        MediaQuery.sizeOf(context).height * .5,
-                        max(0.0, constraints.maxHeight - 90),
-                      ),
-                    ),
-                    child: SingleChildScrollView(
-                      child: IgnorePointer(
-                        ignoring: selectingCollection,
-                        child: _GlassComposer(
-                          availableHeight: min(
-                            MediaQuery.sizeOf(context).height * .5,
-                            max(0.0, constraints.maxHeight - 90),
-                          ),
-                          language: language,
-                          characterProfile: characterProfile,
-                          controller: inputController,
-                          narrationController: narrationController,
-                          bottomNarrationController: bottomNarrationController,
-                          splitNarration: splitNarration,
-                          onToggleNarration: onToggleNarration,
-                          isReplying: isReplying,
-                          showMicrophone: showMicrophone,
-                          unlockInputWhileReplying: unlockInputWhileReplying,
-                          attachments: attachments,
-                          liquidGlass: liquidGlass,
-                          onTakePhoto: onTakePhoto,
-                          onPickImage: onPickImage,
-                          onPickFile: onPickFile,
-                          onRemoveAttachment: onRemoveAttachment,
-                          onSubmitted: onSubmitted,
-                          onSend: onSend,
-                          onCancel: onCancel,
-                          expanded: expanded,
-                          onToggleExpanded: onToggleExpanded,
-                        ),
-                      ),
-                    ),
-                  ),
-                    ],
-                  ),
+                  icon: Icons.bookmark_add_rounded,
+                  label: language.text('保存', 'Save', '保存'),
+                  onPressed: savingCollection ? null : onToggleCollection,
                 ),
               ),
-          Positioned(
-            left: 12,
-            right: showFullscreenButton ? 116 : 64,
-            top: 0,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _SuggestionQuotaButton(
-                    language: language,
-                    liquidGlass: liquidGlass,
-                    isSuggesting: isSuggestingReply,
-                    controller: suggestionController,
-                    onPressed:
-                        !isReplying &&
-                            !selectingCollection &&
-                            !isSuggestingReply
-                        ? onSuggestReply
-                        : null,
-                  ),
-                  const SizedBox(width: 7),
-                  GlassIconButton(
-                    liquidGlass: liquidGlass,
-                    icon: Icons.undo_rounded,
-                    tooltip: language.text(
-                      '撤回上一条消息',
-                      'Undo last message',
-                      '直前のメッセージを取り消す',
-                    ),
-                    onPressed: canUndo && !selectingCollection ? onUndo : null,
-                    size: 36,
-                  ),
-                  const SizedBox(width: 7),
-                  GlassIconButton(
-                    liquidGlass: liquidGlass,
-                    icon: isContinuing
-                        ? Icons.autorenew_rounded
-                        : Icons.double_arrow_rounded,
-                    iconWidget: isContinuing
-                        ? const _RotatingIcon(Icons.autorenew_rounded)
-                        : null,
-                    tooltip: language.text(
-                      '让${characterProfile.names.chinese}继续对话',
-                      'Let ${characterProfile.names.english} continue',
-                      '${characterProfile.names.japanese}に会話を続けてもらう',
-                    ),
-                    onPressed:
-                        canContinue && !isContinuing && !selectingCollection
-                        ? onContinue
-                        : null,
-                    size: 36,
-                  ),
-                  const SizedBox(width: 7),
-                  GlassIconButton(
-                    liquidGlass: liquidGlass,
-                    icon: Icons.replay_rounded,
-                    iconWidget: regeneratingSpeech
-                        ? const _RotatingIcon(Icons.autorenew_rounded)
-                        : null,
-                    onLongPress:
-                        !isReplying &&
-                            !selectingCollection &&
-                            messages.any(
-                              (m) => !m.isUser && m.text.trim().isNotEmpty,
-                            )
-                        ? onRegenerateSpeech
-                        : null,
-                    tooltip: language.text(
-                      '点击重播语音，长按重新生成',
-                      'Tap to replay; hold to regenerate speech',
-                      'タップで再生、長押しで音声を再生成',
-                    ),
-                    onPressed: canReplay && !selectingCollection
-                        ? onReplay
-                        : null,
-                    size: 36,
-                  ),
-                  const SizedBox(width: 7),
-                  GlassIconButton(
-                    liquidGlass: liquidGlass,
-                    icon: selectingCollection
-                        ? Icons.bookmark_add_rounded
-                        : Icons.checklist_rounded,
-                    tooltip: language.text(
-                      selectingCollection ? '保存收藏（未选择则退出）' : '多选收藏文字或语音',
-                      selectingCollection
-                          ? 'Save collection (empty selection exits)'
-                          : 'Select text or audio',
-                      selectingCollection ? 'お気に入りを保存（未選択で終了）' : 'テキスト・音声を選択',
-                    ),
-                    onPressed: isReplying || savingCollection
-                        ? null
-                        : onToggleCollection,
-                    size: 36,
-                  ),
-                ],
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: min(
+                  MediaQuery.sizeOf(context).height * .5,
+                  max(0.0, constraints.maxHeight - 90),
+                ),
               ),
-            ),
-          ),
-          Positioned(
-            right: 12,
-            top: 0,
-            child: Semantics(
-              label: language.text(
-                panelLocked ? '高度已锁定，长按解锁' : '拖动调整高度，长按锁定',
-                panelLocked
-                    ? 'Height locked; hold to unlock'
-                    : 'Drag to resize; hold to lock',
-                panelLocked ? '高さ固定中・長押しで解除' : 'ドラッグで高さ変更・長押しで固定',
-              ),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onLongPress: onTogglePanelLock,
-                onVerticalDragUpdate: panelLocked
-                    ? null
-                    : (details) => onDragUpdate(details.delta.dy),
-                child: _GlassDragHandle(
+              child: SingleChildScrollView(
+                child: _GlassComposer(
+                  availableHeight: min(
+                    MediaQuery.sizeOf(context).height * .5,
+                    max(0.0, constraints.maxHeight - 90),
+                  ),
+                  language: language,
+                  characterProfile: characterProfile,
+                  controller: inputController,
+                  narrationController: narrationController,
+                  bottomNarrationController: bottomNarrationController,
+                  splitNarration: splitNarration,
+                  onToggleNarration: onToggleNarration,
+                  isReplying: isReplying,
+                  showMicrophone: showMicrophone,
+                  unlockInputWhileReplying: unlockInputWhileReplying,
+                  attachments: attachments,
                   liquidGlass: liquidGlass,
-                  locked: panelLocked,
+                  tools: tools,
+                  onTakePhoto: onTakePhoto,
+                  onPickImage: onPickImage,
+                  onPickFile: onPickFile,
+                  onRemoveAttachment: onRemoveAttachment,
+                  onSubmitted: onSubmitted,
+                  onSend: onSend,
+                  onCancel: onCancel,
+                  expanded: expanded,
+                  onToggleExpanded: onToggleExpanded,
                 ),
               ),
             ),
-          ),
-          if (showFullscreenButton)
-            Positioned(
-              right: 64,
-              top: 0,
-              child: GlassIconButton(
-                liquidGlass: liquidGlass,
-                size: 44,
-                icon: conversationFullscreen
-                    ? Icons.fullscreen_exit_rounded
-                    : Icons.fullscreen_rounded,
-                tooltip: conversationFullscreen ? '退出全屏对话' : '全屏对话',
-                onPressed: onToggleFullscreen,
-              ),
-            ),
-            ],
-          ),
         ],
       ),
     );
   }
 }
 
-class _LiquidGlassSurface extends StatelessWidget {
-  const _LiquidGlassSurface({required this.child, required this.liquidGlass});
+/// Status + callback tombol alat yang sekarang tinggal di menu "+".
+/// Callback null = tombol nonaktif.
+class _ComposerTools {
+  const _ComposerTools({
+    required this.suggestionController,
+    required this.isSuggesting,
+    required this.isContinuing,
+    required this.regeneratingSpeech,
+    required this.selectingCollection,
+    required this.conversationFullscreen,
+    required this.onToggleFullscreen,
+    this.onSuggest,
+    this.onUndo,
+    this.onContinue,
+    this.onReplay,
+    this.onRegenerate,
+    this.onToggleCollection,
+  });
 
-  final Widget child;
-  final bool liquidGlass;
+  final AppController suggestionController;
+  final bool isSuggesting;
+  final bool isContinuing;
+  final bool regeneratingSpeech;
+  final bool selectingCollection;
+  final bool conversationFullscreen;
+  final VoidCallback onToggleFullscreen;
+  final VoidCallback? onSuggest;
+  final VoidCallback? onUndo;
+  final VoidCallback? onContinue;
+  final VoidCallback? onReplay;
+  final VoidCallback? onRegenerate;
+  final VoidCallback? onToggleCollection;
 
-  @override
-  Widget build(BuildContext context) {
-    return GlassSurface(
-      liquidGlass: liquidGlass,
-      fallbackColor: const Color(0xFF201D1B).withValues(alpha: 0.72),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x52000000),
-          blurRadius: 24,
-          offset: Offset(0, 10),
-        ),
-      ],
-      child: Padding(padding: const EdgeInsets.only(top: 32), child: child),
-    );
-  }
-}
-
-class _GlassDragHandle extends StatelessWidget {
-  const _GlassDragHandle({required this.liquidGlass, required this.locked});
-
-  final bool liquidGlass;
-  final bool locked;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassSurface(
-      liquidGlass: liquidGlass,
-      tone: GlassTone.light,
-      borderRadius: BorderRadius.circular(22),
-      fallbackColor: Colors.white.withValues(alpha: 0.82),
-      boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 10)],
-      child: SizedBox.square(
-        dimension: 44,
-        child: Icon(
-          locked ? Icons.lock_rounded : Icons.unfold_more_rounded,
-          size: 23,
-          color: Color(0xFF4A2F28),
-        ),
-      ),
-    );
-  }
+  bool get busy => isSuggesting || isContinuing || regeneratingSpeech;
 }
 
 const _bubbleNameStyle = TextStyle(
@@ -9852,6 +9724,7 @@ class _GlassComposer extends StatelessWidget {
     required this.unlockInputWhileReplying,
     required this.attachments,
     required this.liquidGlass,
+    required this.tools,
     required this.onTakePhoto,
     required this.onPickImage,
     required this.onPickFile,
@@ -9863,6 +9736,7 @@ class _GlassComposer extends StatelessWidget {
     required this.onToggleExpanded,
   });
 
+  final _ComposerTools tools;
   final AppLanguage language;
   final CharacterRuntimeProfile characterProfile;
   final TextEditingController controller;
@@ -9917,7 +9791,10 @@ class _GlassComposer extends StatelessWidget {
                 const SizedBox(width: 4),
               ],
               Expanded(
-                child: Container(
+                child: _InputShell(
+                  glass: !splitNarration,
+                  liquidGlass: liquidGlass,
+                  child: Container(
                   height: splitNarration
                       ? min(
                           expanded ? availableHeight : 174.0,
@@ -9934,13 +9811,15 @@ class _GlassComposer extends StatelessWidget {
                     maxHeight: splitNarration ? double.infinity : 96,
                   ),
                   padding: const EdgeInsets.only(left: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.28),
-                    ),
-                  ),
+                  decoration: splitNarration
+                      ? BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.28),
+                          ),
+                        )
+                      : null,
                   child: splitNarration
                       ? NarrationComposerFields(
                           controllers: [
@@ -10012,12 +9891,14 @@ class _GlassComposer extends StatelessWidget {
                               language: language,
                               liquidGlass: liquidGlass,
                               enabled: !isReplying,
+                              tools: tools,
                               onTakePhoto: onTakePhoto,
                               onPickImage: onPickImage,
                               onPickFile: onPickFile,
                             ),
                           ),
                         ),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -10070,11 +9951,35 @@ class _GlassComposer extends StatelessWidget {
   }
 }
 
+/// Cangkang input: kaca (seperti referensi) untuk mode satu baris.
+class _InputShell extends StatelessWidget {
+  const _InputShell({
+    required this.glass,
+    required this.liquidGlass,
+    required this.child,
+  });
+
+  final bool glass;
+  final bool liquidGlass;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!glass) return child;
+    return GlassSurface(
+      liquidGlass: liquidGlass,
+      fallbackColor: const Color(0xFF201D1B).withValues(alpha: 0.72),
+      child: child,
+    );
+  }
+}
+
 class _AttachmentMenuButton extends StatefulWidget {
   const _AttachmentMenuButton({
     required this.language,
     required this.liquidGlass,
     required this.enabled,
+    required this.tools,
     required this.onTakePhoto,
     required this.onPickImage,
     required this.onPickFile,
@@ -10082,7 +9987,11 @@ class _AttachmentMenuButton extends StatefulWidget {
 
   final AppLanguage language;
   final bool liquidGlass;
+
+  /// Hanya mengatur Camera/Image/File. Tombol alat punya status sendiri di
+  /// [tools], jadi menu tetap bisa dibuka saat karakter sedang membalas.
   final bool enabled;
+  final _ComposerTools tools;
   final VoidCallback onTakePhoto;
   final VoidCallback onPickImage;
   final VoidCallback onPickFile;
@@ -10094,6 +10003,7 @@ class _AttachmentMenuButton extends StatefulWidget {
 class _AttachmentMenuButtonState extends State<_AttachmentMenuButton> {
   final _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
+  double _maxRowWidth = 320;
 
   bool get _expanded => _overlayEntry != null;
 
@@ -10102,57 +10012,167 @@ class _AttachmentMenuButtonState extends State<_AttachmentMenuButton> {
       _close();
       return;
     }
-    if (!widget.enabled) return;
-    _overlayEntry = OverlayEntry(
-      builder: (overlayContext) => Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: _close,
-            ),
-          ),
-          CompositedTransformFollower(
-            link: _layerLink,
-            showWhenUnlinked: false,
-            targetAnchor: Alignment.topRight,
-            followerAnchor: Alignment.bottomRight,
-            offset: const Offset(0, -8),
-            child: Material(
-              type: MaterialType.transparency,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _AttachmentMenuOption(
-                    liquidGlass: widget.liquidGlass,
-                    icon: Icons.camera_alt_outlined,
-                    label: widget.language.text('拍照', 'Camera', '撮影'),
-                    onPressed: () => _select(widget.onTakePhoto),
-                  ),
-                  const SizedBox(height: 6),
-                  _AttachmentMenuOption(
-                    liquidGlass: widget.liquidGlass,
-                    icon: Icons.image_outlined,
-                    label: widget.language.text('图片', 'Image', '画像'),
-                    onPressed: () => _select(widget.onPickImage),
-                  ),
-                  const SizedBox(height: 6),
-                  _AttachmentMenuOption(
-                    liquidGlass: widget.liquidGlass,
-                    icon: Icons.description_outlined,
-                    label: widget.language.text('文件', 'File', 'ファイル'),
-                    onPressed: () => _select(widget.onPickFile),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+    final box = context.findRenderObject();
+    if (box is RenderBox && box.hasSize) {
+      final rightEdge = box.localToGlobal(Offset(box.size.width, 0)).dx;
+      _maxRowWidth = max(140.0, rightEdge - 10);
+    }
+    _overlayEntry = OverlayEntry(builder: _buildOverlay);
     Overlay.of(context).insert(_overlayEntry!);
     setState(() {});
+  }
+
+  Widget _buildOverlay(BuildContext overlayContext) {
+    final tools = widget.tools;
+    final language = widget.language;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: _close,
+          ),
+        ),
+        CompositedTransformFollower(
+          link: _layerLink,
+          showWhenUnlinked: false,
+          targetAnchor: Alignment.topRight,
+          followerAnchor: Alignment.bottomRight,
+          offset: const Offset(0, -8),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _AttachmentMenuOption(
+                  liquidGlass: widget.liquidGlass,
+                  icon: Icons.checklist_rounded,
+                  label: language.text('多选', 'Select', '選択'),
+                  onPressed: tools.onToggleCollection == null
+                      ? null
+                      : () => _select(tools.onToggleCollection!),
+                ),
+                const SizedBox(height: 6),
+                _AttachmentMenuOption(
+                  liquidGlass: widget.liquidGlass,
+                  icon: tools.conversationFullscreen
+                      ? Icons.fullscreen_exit_rounded
+                      : Icons.fullscreen_rounded,
+                  label: tools.conversationFullscreen
+                      ? language.text('退出全屏', 'Exit full', '全画面終了')
+                      : language.text('全屏对话', 'Fullscreen', '全画面'),
+                  onPressed: () => _select(tools.onToggleFullscreen),
+                ),
+                const SizedBox(height: 6),
+                _AttachmentMenuOption(
+                  liquidGlass: widget.liquidGlass,
+                  icon: Icons.camera_alt_outlined,
+                  label: language.text('拍照', 'Camera', '撮影'),
+                  onPressed: widget.enabled
+                      ? () => _select(widget.onTakePhoto)
+                      : null,
+                ),
+                const SizedBox(height: 6),
+                // Baris sejajar "Image": 4 tombol alat + opsi Image.
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: _maxRowWidth),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _SuggestionQuotaButton(
+                          language: language,
+                          liquidGlass: widget.liquidGlass,
+                          isSuggesting: tools.isSuggesting,
+                          controller: tools.suggestionController,
+                          onPressed: tools.onSuggest == null
+                              ? null
+                              : () => _select(tools.onSuggest!),
+                        ),
+                        const SizedBox(width: 6),
+                        GlassIconButton(
+                          liquidGlass: widget.liquidGlass,
+                          icon: Icons.undo_rounded,
+                          tooltip: language.text(
+                            '撤回上一条消息',
+                            'Undo last message',
+                            '直前のメッセージを取り消す',
+                          ),
+                          onPressed: tools.onUndo == null
+                              ? null
+                              : () => _select(tools.onUndo!),
+                          size: 36,
+                        ),
+                        const SizedBox(width: 6),
+                        GlassIconButton(
+                          liquidGlass: widget.liquidGlass,
+                          icon: tools.isContinuing
+                              ? Icons.autorenew_rounded
+                              : Icons.double_arrow_rounded,
+                          iconWidget: tools.isContinuing
+                              ? const _RotatingIcon(Icons.autorenew_rounded)
+                              : null,
+                          tooltip: language.text(
+                            '让角色继续对话',
+                            'Let her continue',
+                            '会話を続けてもらう',
+                          ),
+                          onPressed: tools.onContinue == null
+                              ? null
+                              : () => _select(tools.onContinue!),
+                          size: 36,
+                        ),
+                        const SizedBox(width: 6),
+                        GlassIconButton(
+                          liquidGlass: widget.liquidGlass,
+                          icon: Icons.replay_rounded,
+                          iconWidget: tools.regeneratingSpeech
+                              ? const _RotatingIcon(Icons.autorenew_rounded)
+                              : null,
+                          onLongPress: tools.onRegenerate == null
+                              ? null
+                              : () => _select(tools.onRegenerate!),
+                          tooltip: language.text(
+                            '点击重播语音，长按重新生成',
+                            'Tap to replay; hold to regenerate speech',
+                            'タップで再生、長押しで音声を再生成',
+                          ),
+                          onPressed: tools.onReplay == null
+                              ? null
+                              : () => _select(tools.onReplay!),
+                          size: 36,
+                        ),
+                        const SizedBox(width: 10),
+                        _AttachmentMenuOption(
+                          liquidGlass: widget.liquidGlass,
+                          icon: Icons.image_outlined,
+                          label: language.text('图片', 'Image', '画像'),
+                          onPressed: widget.enabled
+                              ? () => _select(widget.onPickImage)
+                              : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _AttachmentMenuOption(
+                  liquidGlass: widget.liquidGlass,
+                  icon: Icons.description_outlined,
+                  label: language.text('文件', 'File', 'ファイル'),
+                  onPressed: widget.enabled
+                      ? () => _select(widget.onPickFile)
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   void _select(VoidCallback callback) {
@@ -10169,7 +10189,13 @@ class _AttachmentMenuButtonState extends State<_AttachmentMenuButton> {
   @override
   void didUpdateWidget(covariant _AttachmentMenuButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.enabled && _expanded) _close();
+    // Overlay tidak ikut rebuild otomatis; segarkan status tombol setelah
+    // frame ini selesai.
+    if (_expanded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _overlayEntry?.markNeedsBuild();
+      });
+    }
   }
 
   @override
@@ -10181,10 +10207,11 @@ class _AttachmentMenuButtonState extends State<_AttachmentMenuButton> {
 
   @override
   Widget build(BuildContext context) {
+    final busy = widget.tools.busy && !_expanded;
     return CompositedTransformTarget(
       link: _layerLink,
       child: IconButton(
-        onPressed: widget.enabled ? _toggle : null,
+        onPressed: _toggle,
         tooltip: _expanded
             ? widget.language.text(
                 '收起附件菜单',
@@ -10193,13 +10220,26 @@ class _AttachmentMenuButtonState extends State<_AttachmentMenuButton> {
               )
             : widget.language.text('添加附件', 'Add attachment', '添付を追加'),
         color: Colors.white,
-        icon: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 180),
-          child: Icon(
-            _expanded ? Icons.close_rounded : Icons.add_rounded,
-            key: ValueKey(_expanded),
-            size: 30,
-          ),
+        icon: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (busy)
+              const SizedBox.square(
+                dimension: 32,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white70,
+                ),
+              ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: Icon(
+                _expanded ? Icons.close_rounded : Icons.add_rounded,
+                key: ValueKey(_expanded),
+                size: 26,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -10217,27 +10257,30 @@ class _AttachmentMenuOption extends StatelessWidget {
   final bool liquidGlass;
   final IconData icon;
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return GlassSurface(
-      liquidGlass: liquidGlass,
-      borderRadius: BorderRadius.circular(20),
-      fallbackColor: Colors.black.withValues(alpha: 0.58),
-      child: InkWell(
+    return Opacity(
+      opacity: onPressed == null ? 0.45 : 1,
+      child: GlassSurface(
+        liquidGlass: liquidGlass,
         borderRadius: BorderRadius.circular(20),
-        onTap: onPressed,
-        child: SizedBox(
-          width: 116,
-          height: 40,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: Colors.white, size: 19),
-              const SizedBox(width: 8),
-              Text(label, style: const TextStyle(color: Colors.white)),
-            ],
+        fallbackColor: Colors.black.withValues(alpha: 0.58),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onPressed,
+          child: SizedBox(
+            width: 108,
+            height: 40,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white, size: 19),
+                const SizedBox(width: 8),
+                Text(label, style: const TextStyle(color: Colors.white)),
+              ],
+            ),
           ),
         ),
       ),
