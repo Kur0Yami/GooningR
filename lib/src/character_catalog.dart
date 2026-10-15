@@ -20,6 +20,7 @@ class CharacterNames {
     AppLanguage.chinese => chinese,
     AppLanguage.english => english,
     AppLanguage.japanese => japanese,
+    AppLanguage.indonesian => english,
   };
 }
 

@@ -45,6 +45,8 @@ class AlchemyItemTemplate {
     AppLanguage.chinese => name,
     AppLanguage.english => englishName.isEmpty ? name : englishName,
     AppLanguage.japanese => japaneseName.isEmpty ? name : japaneseName,
+    // Belum ada teks Indonesia khusus; pakai nama Inggris sebagai fallback.
+    AppLanguage.indonesian => englishName.isEmpty ? name : englishName,
   };
 
   String localizedDescription(AppLanguage language) => switch (language) {
@@ -53,6 +55,8 @@ class AlchemyItemTemplate {
       englishDescription.isEmpty ? description : englishDescription,
     AppLanguage.japanese =>
       japaneseDescription.isEmpty ? description : japaneseDescription,
+    AppLanguage.indonesian =>
+      englishDescription.isEmpty ? description : englishDescription,
   };
 }
 

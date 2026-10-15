@@ -46,6 +46,7 @@ String alarmAudioLocale(AppLanguage language) => switch (language) {
   AppLanguage.chinese => 'zh-tw',
   AppLanguage.english => 'en',
   AppLanguage.japanese => 'ja',
+  AppLanguage.indonesian => 'id',
 };
 
 String alarmTimePeriod(int hour) {

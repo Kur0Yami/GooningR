@@ -18,6 +18,7 @@ AppLanguage? translationLanguageToAppLanguage(TranslationLanguage language) =>
       TranslationLanguage.chinese => AppLanguage.chinese,
       TranslationLanguage.english => AppLanguage.english,
       TranslationLanguage.japanese => AppLanguage.japanese,
+      TranslationLanguage.indonesian => AppLanguage.indonesian,
     };
 
 final _kana = RegExp(r'[\u3041-\u3096\u30a1-\u30fa]');
