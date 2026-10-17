@@ -155,6 +155,28 @@ class CharacterLipSyncClosure {
   final double releaseMs;
   final double crossfadeMs;
 
+  /// Gentler response for the optional lip-sync dynamics mode. The audio
+  /// envelope already contains forced syllable closures, so closures are not
+  /// held longer here and the dB window is widened to suit typical TTS
+  /// loudness. Attack/release come from the user's settings (milliseconds).
+  CharacterLipSyncClosure softened({
+    double attackMs = 45,
+    double releaseMs = 120,
+  }) => CharacterLipSyncClosure(
+    enabled: enabled,
+    ratio: ratio,
+    dipThreshold: dipThreshold,
+    minHoldMs: 0,
+    refWindowMs: refWindowMs,
+    rmsCeiling: rmsCeiling,
+    opennessFloorDb: min(opennessFloorDb, -45),
+    opennessCeilingDb: min(opennessCeilingDb, -12),
+    opennessOutputScale: opennessOutputScale,
+    attackMs: attackMs,
+    releaseMs: releaseMs,
+    crossfadeMs: min(releaseMs, 90),
+  );
+
   factory CharacterLipSyncClosure.fromConfig(Map<String, Object?> data) =>
       CharacterLipSyncClosure(
         enabled: data['enabled'] == true,

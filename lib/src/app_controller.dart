@@ -1115,6 +1115,11 @@ class AppController extends ChangeNotifier {
   bool ambientEnabled = false;
   double ambientVolume = 0.45;
   bool liquidGlassChatUi = false;
+  // false: drive the mouth directly from the audio envelope (smooth, default).
+  // true: use the skin's lipSyncClosure dynamics (softened).
+  bool lipSyncDynamicsEnabled = false;
+  double lipSyncAttackMs = 45;
+  double lipSyncReleaseMs = 120;
   bool pauseCharacterAnimationOnFullscreenPages = true;
   bool gazeTrackingEnabled = true;
   bool showMicrophoneButton = false;
@@ -1486,6 +1491,14 @@ class AppController extends ChangeNotifier {
     ambientEnabled = _preferences.getBool('ambient_enabled') ?? false;
     ambientVolume = _preferences.getDouble('ambient_volume') ?? 0.45;
     liquidGlassChatUi = _preferences.getBool('liquid_glass_chat_ui') ?? false;
+    lipSyncDynamicsEnabled =
+        _preferences.getBool('lip_sync_dynamics_enabled') ?? false;
+    lipSyncAttackMs = (_preferences.getDouble('lip_sync_attack_ms') ?? 45)
+        .clamp(10, 150)
+        .toDouble();
+    lipSyncReleaseMs = (_preferences.getDouble('lip_sync_release_ms') ?? 120)
+        .clamp(30, 400)
+        .toDouble();
     pauseCharacterAnimationOnFullscreenPages =
         _preferences.getBool('pause_character_animation_on_fullscreen_pages') ??
         true;
@@ -3910,6 +3923,9 @@ $japanesePunctuationRule
     'ambientEnabled': ambientEnabled,
     'ambientVolume': ambientVolume,
     'liquidGlassChatUi': liquidGlassChatUi,
+    'lipSyncDynamicsEnabled': lipSyncDynamicsEnabled,
+    'lipSyncAttackMs': lipSyncAttackMs,
+    'lipSyncReleaseMs': lipSyncReleaseMs,
     'pauseCharacterAnimationOnFullscreenPages':
         pauseCharacterAnimationOnFullscreenPages,
     'showMicrophoneButton': showMicrophoneButton,
@@ -4689,6 +4705,13 @@ $japanesePunctuationRule
     ambientEnabled = data['ambientEnabled'] as bool? ?? false;
     ambientVolume = (data['ambientVolume'] as num?)?.toDouble() ?? 0.45;
     liquidGlassChatUi = data['liquidGlassChatUi'] as bool? ?? false;
+    lipSyncDynamicsEnabled = data['lipSyncDynamicsEnabled'] as bool? ?? false;
+    lipSyncAttackMs = ((data['lipSyncAttackMs'] as num?)?.toDouble() ?? 45)
+        .clamp(10, 150)
+        .toDouble();
+    lipSyncReleaseMs = ((data['lipSyncReleaseMs'] as num?)?.toDouble() ?? 120)
+        .clamp(30, 400)
+        .toDouble();
     pauseCharacterAnimationOnFullscreenPages =
         data['pauseCharacterAnimationOnFullscreenPages'] as bool? ?? true;
     showMicrophoneButton = data['showMicrophoneButton'] as bool? ?? false;
@@ -5828,6 +5851,21 @@ $japanesePunctuationRule
     _changed();
   }
 
+  void setLipSyncDynamicsEnabled(bool value) {
+    lipSyncDynamicsEnabled = value;
+    _changed();
+  }
+
+  void setLipSyncAttackMs(double value) {
+    lipSyncAttackMs = value.clamp(10, 150).toDouble();
+    _changed();
+  }
+
+  void setLipSyncReleaseMs(double value) {
+    lipSyncReleaseMs = value.clamp(30, 400).toDouble();
+    _changed();
+  }
+
   void setPauseCharacterAnimationOnFullscreenPages(bool value) {
     pauseCharacterAnimationOnFullscreenPages = value;
     _changed();
@@ -6317,6 +6355,9 @@ $japanesePunctuationRule
       _preferences.setBool('ambient_enabled', ambientEnabled),
       _preferences.setDouble('ambient_volume', ambientVolume),
       _preferences.setBool('liquid_glass_chat_ui', liquidGlassChatUi),
+      _preferences.setBool('lip_sync_dynamics_enabled', lipSyncDynamicsEnabled),
+      _preferences.setDouble('lip_sync_attack_ms', lipSyncAttackMs),
+      _preferences.setDouble('lip_sync_release_ms', lipSyncReleaseMs),
       _preferences.setBool(
         'pause_character_animation_on_fullscreen_pages',
         pauseCharacterAnimationOnFullscreenPages,

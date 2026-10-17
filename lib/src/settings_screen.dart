@@ -824,6 +824,71 @@ class SettingsScreenState extends State<SettingsScreen> {
                           ),
                   ),
                 ),
+                SwitchListTile(
+                  value: controller.lipSyncDynamicsEnabled,
+                  onChanged: controller.setLipSyncDynamicsEnabled,
+                  secondary: const Icon(Icons.graphic_eq_rounded),
+                  title: Text(
+                    language.text('口型动态闭合', 'Lip-sync dynamics', '口パク動的クローズ'),
+                  ),
+                  subtitle: Text(
+                    controller.lipSyncDynamicsEnabled
+                        ? language.text(
+                            '使用皮肤自带的闭口动态（已柔化）',
+                            'Use the skin\'s mouth-closure dynamics (softened)',
+                            'スキン付属の口閉じ動作を使用（調整済み）',
+                          )
+                        : language.text(
+                            '直接用音频包络驱动嘴部（默认，更平滑）',
+                            'Drive the mouth directly from the audio envelope (default, smoother)',
+                            '音声エンベロープで直接口を動かす（標準・なめらか）',
+                          ),
+                  ),
+                ),
+                if (controller.lipSyncDynamicsEnabled) ...[
+                  ListTile(
+                    leading: const SizedBox(width: 24),
+                    title: Text(
+                      language.text('张嘴速度', 'Mouth open speed', '口を開く速さ'),
+                    ),
+                    subtitle: PlatformSlider(
+                      value: controller.lipSyncAttackMs,
+                      min: 10,
+                      max: 150,
+                      divisions: 28,
+                      label: '${controller.lipSyncAttackMs.round()} ms',
+                      onChanged: controller.setLipSyncAttackMs,
+                    ),
+                    trailing: SizedBox(
+                      width: 56,
+                      child: Text(
+                        '${controller.lipSyncAttackMs.round()} ms',
+                        textAlign: TextAlign.end,
+                      ),
+                    ),
+                  ),
+                  ListTile(
+                    leading: const SizedBox(width: 24),
+                    title: Text(
+                      language.text('闭嘴速度', 'Mouth close speed', '口を閉じる速さ'),
+                    ),
+                    subtitle: PlatformSlider(
+                      value: controller.lipSyncReleaseMs,
+                      min: 30,
+                      max: 400,
+                      divisions: 37,
+                      label: '${controller.lipSyncReleaseMs.round()} ms',
+                      onChanged: controller.setLipSyncReleaseMs,
+                    ),
+                    trailing: SizedBox(
+                      width: 56,
+                      child: Text(
+                        '${controller.lipSyncReleaseMs.round()} ms',
+                        textAlign: TextAlign.end,
+                      ),
+                    ),
+                  ),
+                ],
                 ListTile(
                   leading: const Icon(Icons.volume_up_outlined),
                   title: Text(language.text('语音音量', 'Voice volume', '音声音量')),

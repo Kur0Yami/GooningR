@@ -1925,7 +1925,10 @@ class _ChatScreenState extends State<ChatScreen> {
       ..reset();
     _activeSpeechEnvelope = envelope;
     _lipSyncDynamics = CharacterLipSyncDynamics(
-      _resourceBehavior.lipSyncClosure,
+      _resourceBehavior.lipSyncClosure.softened(
+        attackMs: widget.controller.lipSyncAttackMs,
+        releaseMs: widget.controller.lipSyncReleaseMs,
+      ),
     );
     _currentSpeechEnergy = envelope == null ? 0.45 : 0;
     widget.controller.frameRate.setActivity(FrameRateActivity.speech, true);
@@ -2296,11 +2299,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final envelope = _activeSpeechEnvelope;
     final entry = _lipSyncEntry;
     if (!_isCharacterSpeaking || envelope == null) return;
-    final energy =
-        _lipSyncDynamics?.sample(envelope, position) ??
-        envelope.valueAt(position);
+    // Default: drive the mouth straight from the envelope (it already holds
+    // forced syllable closures). Optional: the skin's closure dynamics.
+    final useDynamics =
+        widget.controller.lipSyncDynamicsEnabled &&
+        _resourceBehavior.lipSyncClosure.enabled;
+    final energy = useDynamics
+        ? (_lipSyncDynamics?.sample(envelope, position) ??
+              envelope.valueAt(position))
+        : envelope.valueAt(position);
     _currentSpeechEnergy = energy;
-    final mouthOpen = _resourceBehavior.lipSyncClosure.enabled
+    final mouthOpen = useDynamics
         ? energy * 0.48
         : energy < 0.08
         ? 0.0
